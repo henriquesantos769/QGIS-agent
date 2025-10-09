@@ -1,0 +1,25 @@
+{% if progress_total and progress_total > 0 %}
+<div class="container mt-4">
+
+  <div class="d-flex justify-content-between small mb-2">
+    <span>📁 Upload</span>
+    <span>🧱 Linhas → Polígonos</span>
+    <span>🧩 Join Lotes</span>
+    <span>🧩 Join Quadras</span>
+    <span>🏁 Join Final</span>
+    <span>👁️ Visualização</span>
+  </div>
+
+  <div class="progress" style="height: 25px;">
+    <div class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+         role="progressbar"
+         style="width: {{ progress_pct }};"
+         aria-valuenow="{{ progress_etapa }}"
+         aria-valuemin="0"
+         aria-valuemax="{{ progress_total }}">
+      Etapa {{ progress_etapa }} de {{ progress_total }} ({{ progress_pct }})
+    </div>
+  </div>
+
+</div>
+{% endif %}
