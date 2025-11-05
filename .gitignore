@@ -1,3 +1,6 @@
 \venv\
 venv.\
 venv/
+.env
+\qgis_webapp\processing\
+\qgis_webapp\media\

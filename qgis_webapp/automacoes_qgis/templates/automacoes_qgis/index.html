@@ -1,0 +1,62 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Agente QGIS | Automação de Processos</title>
+  <link rel="stylesheet" href="{% static 'automacoes_qgis/css/style.css' %}">
+</head>
+<body onpageshow="if (event.persisted) location.reload();" autocomplete="off">
+  <div class="wrap">
+    <div class="card">
+      <h1>Agente QGIS</h1>
+      <p class="subtitle">Envie os arquivos necessários para o processamento automatizado do projeto.</p>
+
+      <div class="upload-area">
+        <label class="uploader" id="dropzone-dxf">
+          <input id="fileInputDXF" type="file" accept=".dxf" />
+          <div>
+            <strong>Arquivo DXF</strong>
+            <div class="hint">Solte aqui ou clique para selecionar</div>
+          </div>
+        </label>
+
+        <label class="uploader" id="dropzone-ortho">
+          <input id="fileInputOrtho" type="file" accept=".ecw,.tif,.tiff" />
+          <div>
+            <strong>Ortofoto (ECW/TIFF)</strong>
+            <div class="hint">Opcional • Base georreferenciada</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="progress-area" id="progressArea">
+        <div class="progress-card">
+          <div class="badge"><span id="stageChip">Etapa 1 de 17</span></div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin:6px 0 8px;">
+            <div id="stageTitle" style="font-size:18px; font-weight:700;">Preparando ambiente…</div>
+            <div class="ticker" id="percentLabel">0%</div>
+          </div>
+
+          <div class="bar"><div id="barFill"></div></div>
+          <div class="mini" id="detailLine">Aguardando início…</div>
+          <div class="steps" id="stepsList" style="margin-top:14px;"></div>
+
+          <div class="footer">
+            <button class="btn primary start-btn" id="startBtn" type="button">▶️ Iniciar</button>
+            <button class="btn ghost" id="resetBtn" style="display:none;" type="button">🔄 Reiniciar</button>
+            <button id="btnExportQField" class="btn success" style="display:none;" type="button">☁️ Enviar para QField Cloud</button>
+            <button id="viewBtn" class="btn download" style="display:none;" type="button">⬇️ Baixar Projeto QGIS</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Processo iniciado!</div>
+
+  <script src="{% static 'automacoes_qgis/js/main.js' %}"></script>
+</body>
+</html>
