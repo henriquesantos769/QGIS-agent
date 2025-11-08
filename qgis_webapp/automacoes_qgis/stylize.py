@@ -9,50 +9,32 @@ from qgis.core import (
     QgsMarkerSymbol,
     QgsWkbTypes,
     QgsUnitTypes,
+    QgsSingleSymbolRenderer
 )
 from PyQt5.QtGui import QColor, QFont
 
 def stylize_layer_lotes(layer):
-    """
-    Aplica estilo visual à camada de lotes:
-    - Preenchimento: Sem pincel (apenas contorno)
-    - Contorno: espessura 0.5
-    - Rótulos: baseados na coluna 'lote_num'
-    """
     if not layer or not layer.isValid():
         print("❌ Camada inválida para estilização.")
         return
 
-    # ===================== ESTILO DO POLÍGONO =====================
-    symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-    symbol.deleteSymbolLayer(0)
+    # 👉 NÃO mexe no renderer aqui, deixa o categorizado em paz
+    # Só configura rótulos
 
-    fill_layer = QgsSimpleFillSymbolLayer()
-    fill_layer.setBrushStyle(0)  # 0 = Sem pincel
-    fill_layer.setStrokeColor(QColor("#EBF400"))
-    fill_layer.setStrokeWidth(0.5)
-
-    symbol.appendSymbolLayer(fill_layer)
-    layer.renderer().setSymbol(symbol)
-
-    # ===================== CONFIGURAÇÃO DE RÓTULOS =====================
     label_settings = QgsPalLayerSettings()
     text_format = QgsTextFormat()
 
     text_format.setFont(QFont("Arial", 13))
     text_format.setSize(13)
     text_format.setColor(QColor("#092DDC"))
-    # text_format.setSizeUnit(QgsUnitTypes.RenderMapUnits)
 
-    # ---------- CONFIGURAÇÃO DO BUFFER (contorno do texto) ----------
     buffer_settings = QgsTextBufferSettings()
     buffer_settings.setEnabled(True)
     buffer_settings.setSize(1.2)
     buffer_settings.setOpacity(0.95)
     buffer_settings.setColor(QColor("#FFFFFF"))
-    text_format.setBuffer(buffer_settings)  # <-- buffer aplicado antes!
+    text_format.setBuffer(buffer_settings)
 
-    # Agora sim, aplica o formato ao label_settings
     label_settings.setFormat(text_format)
     label_settings.fieldName = "lote_num"
     label_settings.enabled = True
@@ -62,7 +44,7 @@ def stylize_layer_lotes(layer):
     layer.setLabelsEnabled(True)
 
     layer.triggerRepaint()
-    print("✨ Estilo aplicado com sucesso à camada de lotes (com buffer vermelho visível).")
+    print("✨ Rótulos aplicados à camada de lotes (renderer preservado).")
 
 def stylize_layer_ruas(layer):
     """

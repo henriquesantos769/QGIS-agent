@@ -1,10 +1,9 @@
 import threading
-from django.shortcuts import render, redirect
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-import geopandas as gpd
 import os
-from django.http import HttpResponse, FileResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.cache import never_cache
 from pathlib import Path
 from .criar_projeto_qgis import create_final_project
@@ -21,14 +20,14 @@ import zipfile
 import shutil
 from qfieldcloud_sdk import sdk
 from dotenv import load_dotenv
-import uuid
-from qgis.core import QgsVectorLayer
+from qgis.core import (
+        QgsVectorLayer
+)
 from django.contrib.sessions.models import Session
 import time
+
 init_qgis()
-
 load_dotenv()
-
 
 def atualizar_progresso_thread(session_key, etapa, mensagem):
     """Atualiza o progresso diretamente na sessão, sem depender do objeto request."""
@@ -72,7 +71,7 @@ def resetar_progresso(request):
     print("🔁 Progresso e sessão zerados (isolado por usuário)")
     return JsonResponse({"status": "ok", "progresso": request.session["progresso"]})
 
-def executar_pipeline(upload_dir, dxf_path, ortho_path, arquivo_nome, session_key):
+def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
     try:
         paths = {
             "linhas": upload_dir / "lotes_linhas" / "lotes_linhas.shp",
@@ -177,15 +176,6 @@ def criar_projeto_qgis(request):
 
     atualizar_progresso(request, 0, "Iniciando criação do projeto...")
 
-    # 🧹 LIMPAR PASTA DE UPLOADS
-    # uploads_root = Path(settings.MEDIA_ROOT) / "uploads"
-    # if uploads_root.exists():
-    #     try:
-    #         shutil.rmtree(uploads_root)
-    #         atualizar_progresso(request, 1, "🧹 Limpando diretórios anteriores...")
-    #     except Exception as e:
-    #         print(f"⚠️ Erro ao limpar uploads: {e}")
-
     if request.method != "POST" or not request.FILES.get("arquivo"):
         return JsonResponse({"status": "erro", "mensagem": "Nenhum arquivo enviado."})
 
@@ -202,7 +192,7 @@ def criar_projeto_qgis(request):
     request.session["base_dir"] = str(upload_dir)
     request.session.modified = True
 
-    atualizar_progresso(request, 2, "📂 Salvando arquivos enviados...")
+    atualizar_progresso(request, 1, "📂 Salvando arquivos enviados...")
     with open(dxf_path, "wb+") as destino:
         for chunk in arquivo.chunks():
             destino.write(chunk)
@@ -220,7 +210,7 @@ def criar_projeto_qgis(request):
             try:
                 atualizar_progresso(request, 2.5, "🧩 Convertendo ortofoto ECW para TIFF reduzido (pode demorar)...")
                 # ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=96)
-                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=2)
+                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=90)
                 print(f"✅ Ortofoto convertida automaticamente: {ortho_path.name}")
             except Exception as e:
                 print(f"⚠️ Erro ao converter ECW: {e}")
@@ -229,7 +219,7 @@ def criar_projeto_qgis(request):
     print("Sessão antes da thread:", request.session.get("progresso"))
     threading.Thread(
         target=executar_pipeline,
-        args=(upload_dir, dxf_path, ortho_path, arquivo.name, request.session.session_key),
+        args=(upload_dir, dxf_path, ortho_path, request.session.session_key),
         daemon=True
     ).start()
 
@@ -300,31 +290,9 @@ def tentar_overpass(request=None):
             "mensagem": str(e)
         })
 
-def converter_para_qgis(request):
-    base_dir = request.session.get("base_dir")
-    mensagem = None
-    arquivo_qgz = None
-
-    if not base_dir:
-        mensagem = "⚠️ Nenhum diretório de trabalho encontrado. Faça o upload primeiro."
-    else:
-        try:
-            # resultado = create_project(base_dir)
-            resultado = create_final_project(Path(base_dir))
-            request.session["etapa"] = 6
-            mensagem = resultado
-            arquivo_qgz = Path(base_dir) / "projeto_final_rotulado.qgz"
-        except Exception as e:
-            mensagem = f"❌ Erro ao criar o projeto QGIS: {e}"
-
-    return render(request, "automacoes_qgis/final.html", {
-        "mensagem": mensagem,
-        "arquivo_qgz": arquivo_qgz
-    })
-
 def download_pacote_zip(request):
     """
-    Empacota o projeto QGIS (project.qgz + shapefiles) para QField
+    Empacota o projeto QGIS (project.qgs + shapefiles) para QField
     e envia como arquivo .zip para download.
     """
     base_dir = request.session.get("base_dir")
@@ -332,84 +300,51 @@ def download_pacote_zip(request):
         return HttpResponse("Nenhum diretório base encontrado na sessão. Gere o projeto antes.")
 
     upload_dir = Path(base_dir)
-    project_file = upload_dir / "project.qgz"
+    project_file = upload_dir / "project_cloud.qgs"
     if not project_file.exists():
         return HttpResponse("Projeto QGIS não encontrado. Gere o projeto antes.")
 
-    # 1️⃣ Caminho de exportação para o pacote QField
     export_folder = upload_dir / "qfield_export"
-
-    # 2️⃣ Empacota o projeto e as pastas relevantes (shapefiles, ortofoto, etc.)
-    include_data_folders = [
-        "final",
-        "ruas",
-        "quadras",
-        "ortofoto" 
-    ]
+    include_data_folders = ["final", "ruas", "quadras", "ortofoto"]
 
     try:
         package_project_for_qfield(
             project_file=project_file,
-            export_folder=export_folder,
+            export_folder=export_folder,   
             include_data_folders=include_data_folders
         )
     except Exception as e:
+        import traceback
+        print("❌ Erro ao empacotar:", traceback.format_exc())
         return JsonResponse({
             "status": "erro",
             "mensagem": f"Falha ao empacotar o projeto: {str(e)}"
         })
 
-    # 3️⃣ Compacta tudo dentro da pasta `qfield_export`
+    # Compacta tudo dentro de qfield_export/
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(export_folder):
             for fname in files:
-                if not fname.endswith((".gpkg", ".qgz", ".tif", ".vrt")):
+                if not fname.endswith((".gpkg", ".qgs", ".tif", ".vrt")):
                     continue
-
                 full = Path(root) / fname
                 arcname = str(full.relative_to(export_folder))
                 zf.write(full, arcname)
 
     buffer.seek(0)
 
-    # 4️⃣ Retorna o ZIP como resposta HTTP
-    response = FileResponse(
-        buffer,
-        as_attachment=True,
-        filename="pacote_projeto_qgis.zip",
-        content_type="application/zip"
-    )
-    response["Content-Length"] = buffer.getbuffer().nbytes
+    # Retorna o ZIP como resposta HTTP (compatível com navegadores)
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = 'attachment; filename="pacote_projeto_qgis.zip"'
+    response["Content-Length"] = len(buffer.getvalue())
     return response
-
-def status_progresso(request):
-    etapa = request.session.get("etapa", 0)
-    status_textos = {
-        0: "Aguardando início...",
-        1: "📂 Lendo e separando DXF...",
-        2: "🔷 Convertendo linhas → polígonos...",
-        3: "🧩 Unindo atributos (Lotes)...",
-        4: "🧱 Unindo atributos (Quadras)...",
-        5: "🗂️ Unindo atributos finais...",
-        6: "🎉 Processamento concluído!",
-        -1: "❌ Erro durante o processamento."
-    }
-    
-    progresso_pct = int((max(etapa, 0) / 6) * 100)
-    return JsonResponse({
-        "etapa": etapa,
-        "texto": status_textos.get(etapa, "Desconhecido"),
-        "progresso": progresso_pct
-    })
 
 def package_project_for_qfield(project_file: Path, export_folder: Path, include_data_folders: list = None):
     if include_data_folders is None:
         include_data_folders = []
 
-    # if export_folder.exists():
-    #     shutil.rmtree(export_folder)
-    export_folder.mkdir(parents=True)
+    export_folder.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(project_file, export_folder / project_file.name)
 
@@ -430,7 +365,6 @@ def package_project_for_qfield(project_file: Path, export_folder: Path, include_
     print(f"📦 Projeto empacotado em: {export_folder}")
     return export_folder
 
-QFIELD_PROGRESS = {"etapa": 0, "mensagem": ""}
 
 def enviar_para_qfieldcloud(request):
     global QFIELD_PROGRESS
@@ -438,43 +372,25 @@ def enviar_para_qfieldcloud(request):
 
     username = os.getenv("QFIELD_USER")
     password = os.getenv("QFIELD_PASS")
-    base_dir = request.session.get("base_dir")
-    if not base_dir:
+    base_dir = Path(request.session.get("base_dir", ""))
+
+    if not base_dir.exists():
         return JsonResponse({"status": "erro", "mensagem": "Base do projeto não encontrada."})
 
-    ortho_dir = Path(base_dir) / "ortofoto"
-
-    ortho_files = list(ortho_dir.glob("*.ecw")) + list(ortho_dir.glob("*.tif"))
+    # Detecta ortofoto e gera nome do projeto
+    ortho_dir = base_dir / "ortofoto"
+    ortho_files = list(ortho_dir.glob("*.tif"))
     if ortho_files:
-        # pega o primeiro arquivo de ortofoto encontrado
-        ortho_name = ortho_files[0].stem
-        ortho_name = ortho_name.replace("reduzido", "")
-
-        # remove a palavra "Ortofoto" (case insensitive)
-        ortho_name = ortho_name.replace("Ortofoto", "").replace("ortofoto", "")
-
-        # tira espaços e substitui por underscore
-        project_name = ortho_name.strip().replace(" ", "")
-
-        # se o nome ficar vazio, usa fallback
-        if not project_name:
-            project_name = "Projeto_Sem_Nome"
+        ortho_name = ortho_files[0].stem.replace("reduzido", "")
+        ortho_name = ortho_name.replace("Ortofoto", "").replace("ortofoto", "").strip().replace(" ", "").replace("_", "")
+        project_name = ortho_name or "Projeto_Sem_Nome"
     else:
         project_name = "Projeto_Sem_Ortofoto"
 
-    upload_dir = Path(base_dir)
-    project_file = upload_dir / "project.qgz"
-    if not project_file.exists():
-        return JsonResponse({"status": "erro", "mensagem": "Projeto QGIS não encontrado."})
+    # 🔹 Caminho base de envio (diretório atual do usuário)
+    upload_dir = base_dir
 
-    data_folders = ["final", "ruas", "ortofoto", "quadras"]
-    export_folder = upload_dir / "qfield_export"
-    if not export_folder.exists():
-        packaged_path = package_project_for_qfield(project_file, export_folder, data_folders)
-    else:
-        packaged_path = export_folder
-
-
+    # 🔹 Login no QFieldCloud
     client = sdk.Client(url="https://app.qfield.cloud/api/v1/")
     client.login(username=username, password=password)
 
@@ -486,44 +402,109 @@ def enviar_para_qfieldcloud(request):
     )
     project_id = proj["id"]
 
-    files = [
-        Path(root) / f
-        for root, _, fs in os.walk(packaged_path)
-        for f in fs if f.endswith((".gpkg", ".qgz", ".tif", ".vrt"))
-    ]
+    # 🔹 Lista arquivos relevantes da pasta atual
+    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto"]
+    exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs"}
+    files = []
+
+    for pasta in pastas_necessarias:
+        dir_path = upload_dir / pasta
+        if dir_path.exists():
+            for root, _, fnames in os.walk(dir_path):
+                for fname in fnames:
+                    fpath = Path(root) / fname
+                    if fpath.suffix.lower() in exts:
+                        files.append(fpath)
+
+    # inclui projeto e thumbnail
+    project_qgs = upload_dir / "project_cloud.qgs"
+    if project_qgs.exists():
+        files.append(project_qgs)
+
+    files.sort(key=lambda p: (p.suffix.lower() == ".qgs", p.as_posix()))
     total = len(files)
+    print(f"📦 {total} arquivos encontrados para upload em {upload_dir}")
 
-    print(f"📦 {total} arquivos encontrados para upload.")
+    # 🔹 Envio mantendo subpastas
     for i, file_path in enumerate(files, start=1):
-        file_path = Path(file_path)  # força ser um Path
-        rel_path = file_path.relative_to(packaged_path).as_posix()
-        QFIELD_PROGRESS = {"etapa": i, "mensagem": f"⬆️ Enviando {str(rel_path)} ({i}/{total})"}
+        time.sleep(2)
+        rel_path = file_path.relative_to(upload_dir).as_posix()
+        QFIELD_PROGRESS = {"etapa": i, "mensagem": f"⬆️ Enviando {rel_path} ({i}/{total})"}
+        print(f"➡️ Uploadando: {rel_path}")
 
-        # Espera breve para garantir flush no sistema de arquivos
-        time.sleep(0.5)
+        try:
+            client.upload_file(
+                project_id,
+                sdk.FileTransferType.PROJECT,
+                file_path,
+                rel_path,
+                show_progress=False,
+            )
+            print(f"✅ Upload concluído: {rel_path}")
+        except Exception as e:
+            print(f"⚠️ Falha ao enviar {rel_path}: {e}")
 
-        for tentativa in range(2):  # até 2 tentativas
-            try:
-                client.upload_file(
-                    project_id,
-                    sdk.FileTransferType.PROJECT,
-                    file_path,
-                    rel_path,
-                    show_progress=True
-                )
-                print(f"✅ Upload concluído: {rel_path}")
-                break
-            except Exception as e:
-                print(f"⚠️ Falha ao enviar {rel_path}: {e}")
-                if tentativa == 0:
-                    print("⏳ Tentando novamente em 1s...")
-                    time.sleep(1)
-                else:
-                    print(f"❌ Upload abortado para {rel_path}")
-
-    print("✅ Finalizado!!")
     QFIELD_PROGRESS = {"etapa": total, "mensagem": "✅ Upload concluído!"}
+    print("✅ Finalizado!")
     return JsonResponse({"status": "sucesso", "projeto_id": project_id})
+
+@csrf_exempt
+def baixar_e_enviar_qfieldcloud(request):
+    """
+    Gera o pacote ZIP do projeto QGIS e envia ao QFieldCloud.
+    Retorna o arquivo ZIP como download e também dispara o upload.
+    """
+    base_dir = request.session.get("base_dir")
+    if not base_dir:
+        return JsonResponse({"status": "erro", "mensagem": "Nenhum projeto ativo encontrado."})
+
+    upload_dir = Path(base_dir)
+    export_folder = upload_dir / "qfield_export"
+    include_data_folders = ["final", "ruas", "quadras", "ortofoto"]
+
+    # Etapa 1: gerar pacote ZIP
+    try:
+        package_project_for_qfield(
+            project_file=upload_dir / "project_cloud.qgs",
+            export_folder=export_folder,
+            include_data_folders=include_data_folders
+        )
+
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(export_folder):
+                for fname in files:
+                    if not fname.endswith((".gpkg", ".qgs", ".tif", ".vrt")):
+                        continue
+                    full = Path(root) / fname
+                    arcname = str(full.relative_to(export_folder))
+                    zf.write(full, arcname)
+
+        buffer.seek(0)
+
+    except Exception as e:
+        import traceback
+        print("❌ Erro ao empacotar:", traceback.format_exc())
+        return JsonResponse({
+            "status": "erro",
+            "mensagem": f"Falha ao empacotar: {str(e)}"
+        })
+
+    # Etapa 2: enviar para QFieldCloud
+    try:
+        response_upload = enviar_para_qfieldcloud(request)
+        print("✅ Projeto enviado para o QFieldCloud com sucesso.")
+    except Exception as e:
+        print(f"⚠️ Falha ao enviar para o QFieldCloud: {e}")
+        response_upload = JsonResponse({
+            "status": "erro",
+            "mensagem": f"Falha ao enviar para QFieldCloud: {str(e)}"
+        })
+
+    # Etapa 3: retornar o ZIP para download
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = 'attachment; filename="pacote_projeto_qgis.zip"'
+    return response
 
 
 def progresso_qfield(request):

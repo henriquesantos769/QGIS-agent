@@ -1,10 +1,11 @@
 from django.urls import path
 from .views import (criar_projeto_qgis, enviar_para_qfieldcloud,
                      home, download_pacote_zip, progresso, progresso_qfield,
-                     tentar_overpass, resetar_progresso)
+                     tentar_overpass, resetar_progresso, baixar_e_enviar_qfieldcloud)
 
 urlpatterns = [
     path("", home, name="home"),
+    path("baixar_e_enviar_qfieldcloud/", baixar_e_enviar_qfieldcloud, name="baixar_e_enviar_qfieldcloud"),
     path("criar_projeto_qgis/", criar_projeto_qgis, name="criar_projeto_qgis"),
     path("exportar-qfield/", enviar_para_qfieldcloud, name="exportar_qfield"),
     path("download_pacote/", download_pacote_zip, name="download_pacote_zip"),

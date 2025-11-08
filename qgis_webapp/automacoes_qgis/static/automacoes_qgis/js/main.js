@@ -10,6 +10,7 @@ const progressArea = document.getElementById("progressArea");
 const resetBtn = document.getElementById("resetBtn");
 const viewBtn = document.getElementById("viewBtn");
 const btnExportQField = document.getElementById("btnExportQField");
+const btnBaixarEnviar = document.getElementById("btnBaixarEnviar");
 const toast = document.getElementById("toast");
 let projetoPath = null;
 
@@ -290,16 +291,17 @@ function exibirBotaoRetryOverpass() {
 // 🔹 Finaliza interface após execução
 // ---------------------------------------------------------
 function finalizarInterface(erro = false) {
-  clearLoading(startBtn); // restaura botão só agora
-  startBtn.style.display = "none";
+  clearLoading(startBtn); // restaura botão só agora
+  startBtn.style.display = "none";
 
-  if (!erro) {
-    viewBtn.style.display = "inline-flex";
-    btnExportQField.style.display = "inline-flex";
-    resetBtn.style.display = "inline-flex";
-  } else {
-    resetBtn.style.display = "inline-flex";
-  }
+  if (!erro) {
+    viewBtn.style.display = "inline-flex";
+    btnBaixarEnviar.style.display = "inline-flex";
+    btnExportQField.style.display = "inline-flex";
+    resetBtn.style.display = "inline-flex";
+  } else {
+    resetBtn.style.display = "inline-flex";
+  }
 }
 // ---------------------------------------------------------
 // 🔹 Iniciar pipeline
@@ -352,20 +354,21 @@ resetBtn.addEventListener("click", () => {
 // 🔹 Ao carregar a página, zera backend e UI
 // ---------------------------------------------------------
 window.addEventListener("load", async () => {
-  try {
-    await fetch("/resetar_progresso/", { method: "POST", credentials: "include" });
-    console.log("Backend resetado ao carregar a página.");
-  } catch (e) {
-    console.warn("Falha ao resetar progresso inicial:", e);
-  }
+  try {
+    await fetch("/resetar_progresso/", { method: "POST", credentials: "include" });
+    console.log("Backend resetado ao carregar a página.");
+  } catch (e) {
+    console.warn("Falha ao resetar progresso inicial:", e);
+  }
 
-  // estado inicial da UI
-  resetBtn.style.display = "none";
-  viewBtn.style.display = "none";
-  btnExportQField.style.display = "none";
+  // estado inicial da UI
+  resetBtn.style.display = "none";
+  viewBtn.style.display = "none";
+  btnExportQField.style.display = "none";
+  btnBaixarEnviar.style.display = "none";
   
   // Esta chamada agora cuida de esconder o startBtn E a progressArea
-  checkReadyToStart(); 
+  checkReadyToStart(); 
 });
 
 async function monitorarProgressoQField() {
@@ -401,12 +404,14 @@ async function monitorarProgressoQField() {
       if (data.mensagem?.includes("✅ Upload concluído")) {
         clearInterval(interval);
         showToast("✅ Upload completo no QField Cloud!");
+        clearLoading(btnExportQField);
         console.log("[DEBUG] Monitoramento QField encerrado com sucesso.");
       }
 
     } catch (err) {
       console.error("[DEBUG] Erro no monitoramento QField:", err);
       clearInterval(interval);
+      clearLoading(btnExportQField);
       showToast("❌ Erro ao monitorar progresso do QField.");
     }
   }, 1500); // intervalo levemente maior para evitar sobrecarga no servidor
@@ -446,8 +451,8 @@ btnExportQField.addEventListener("click", async () => {
     console.error("[DEBUG] Erro de conexão ao exportar:", err);
     showToast("❌ Erro de conexão ao exportar para QField.");
   } finally {
-    await new Promise(r => setTimeout(r, 200));
-    clearLoading(btnExportQField);
+    // await new Promise(r => setTimeout(r, 200));
+    // clearLoading(btnExportQField);
   }
 });
 
@@ -488,5 +493,46 @@ viewBtn.addEventListener("click", async (e) => {
   } finally {
     await new Promise(r => setTimeout(r, 200));
     clearLoading(viewBtn);
+  }
+});
+
+btnBaixarEnviar.addEventListener("click", async () => {
+  if (!projetoPath) {
+    showToast("❌ Nenhum projeto QGIS disponível para baixar e enviar.");
+    return;
+  }
+
+  setLoading(btnBaixarEnviar, "Processando...");
+  showToast("⏳ Gerando pacote e enviando para QField Cloud...");
+
+  try {
+    // Dispara o monitoramento de progresso do upload
+    monitorarProgressoQField();
+
+    // Faz a requisição ao endpoint combinado
+    const response = await fetch("/baixar_e_enviar_qfieldcloud/", {
+      method: "GET",
+      credentials: "include"
+    });
+
+    if (!response.ok) throw new Error("Falha ao gerar ou enviar o pacote.");
+
+    // Baixa o arquivo ZIP localmente
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "pacote_projeto_qgis.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+    showToast("✅ Projeto baixado e enviado para o QField Cloud com sucesso!");
+  } catch (err) {
+    console.error("[DEBUG] Erro ao baixar e enviar:", err);
+    showToast("❌ Falha ao executar a operação combinada.");
+  } finally {
+    clearLoading(btnBaixarEnviar);
   }
 });

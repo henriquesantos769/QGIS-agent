@@ -177,12 +177,23 @@ h1 { margin:0 0 8px;
 
 @keyframes spin { to { transform:rotate(360deg); } }
 
-.footer { 
-    display:flex; 
-    gap:10px; 
-    margin-top:18px; 
-    justify-content:flex-end; 
-    flex-wrap:wrap; 
+.footer {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;       /* 🔒 nunca quebra linha */
+  overflow-x: auto;        /* 🔹 permite rolar se faltar espaço */
+  padding-bottom: 6px;     /* dá um espacinho pro scroll */
+  scroll-behavior: smooth;
+}
+
+.footer::-webkit-scrollbar {
+  height: 6px;
+}
+.footer::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 3px;
 }
 
 .mini { 
@@ -303,9 +314,27 @@ h1 { margin:0 0 8px;
   box-shadow: none;
 }
 
+.btn.combo {
+  background: linear-gradient(90deg, #7c3aed, #2563eb);
+  color: #fff;
+  border: none;
+}
+
+.btn.combo:hover {
+  background: linear-gradient(90deg, #8b5cf6, #3b82f6);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(79, 70, 229, 0.35);
+}
+
+.btn.combo:active {
+  transform: scale(0.97);
+  box-shadow: none;
+}
+
 /* Animação de aparição suave dos botões */
 #viewBtn,
 #btnExportQField,
+#btnBaixarEnviar,
 #resetBtn {
   opacity: 0;
   transform: translateY(8px);
@@ -314,6 +343,7 @@ h1 { margin:0 0 8px;
 
 #viewBtn[style*="inline-flex"],
 #btnExportQField[style*="inline-flex"],
+#btnBaixarEnviar[style*="inline-flex"],
 #resetBtn[style*="inline-flex"] {
   opacity: 1;
   transform: translateY(0);
