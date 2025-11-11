@@ -208,7 +208,7 @@ def extrair_ruas_overpass(quadras, out_dir):
     coords_str = " ".join([f"{lat} {lon}" for lon, lat in union_poly.exterior.coords])
     query = f"""
     [out:json][timeout:180];
-    way["highway"](poly:"{coords_str}");
+    way["highway"~"residential|tertiary|secondary|primary|unclassified|living_street"](poly:"{coords_str}");
     out tags geom;
     """
 
@@ -264,7 +264,20 @@ def extrair_ruas_overpass(quadras, out_dir):
                 })
 
     if features:
+        # Ainda em EPSG:4326
         gdf = gpd.GeoDataFrame(features, geometry="geometry", crs="EPSG:4326")
+
+        # 🔹 Usa as geometrias Shapely das quadras (já em EPSG:4326)
+        area_union = unary_union(geoms)  # geoms é lista de Shapely Polygons
+
+        # (Opcional) encolher um pouquinho pra não pegar rua muito longe da borda
+        # 0.0003 ~ 30m, ajuste se precisar
+        area_union = area_union.buffer(0.0003)
+
+        # 🔹 Filtra só as ruas que realmente intersectam a área das quadras
+        gdf = gdf[gdf.intersects(area_union)]
+
+        # Agora reprojeta pro mesmo CRS da camada de quadras
         gdf = gdf.to_crs(quadras.crs().authid())
 
         ruas_dir = out_dir / "ruas"
