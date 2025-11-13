@@ -11,9 +11,11 @@ from pathlib import Path
 from collections import defaultdict
 from shapely.geometry import LineString, shape
 from shapely.ops import unary_union
+from shapely.ops import nearest_points
 import requests
 import geopandas as gpd
 import json
+import numpy as np
 import subprocess
 import os
 
@@ -184,7 +186,6 @@ def numerar_lotes(lotes_join, out_path):
     print("Numeração dos lotes concluída:", out_path)
     return lotes_join
 
-
 def extrair_ruas_overpass(quadras, out_dir):
     print("🌐 Baixando ruas do OSM com base no polígono das quadras...")
 
@@ -279,7 +280,7 @@ def extrair_ruas_overpass(quadras, out_dir):
 
         # Agora reprojeta pro mesmo CRS da camada de quadras
         gdf = gdf.to_crs(quadras.crs().authid())
-
+        
         ruas_dir = out_dir / "ruas"
         ruas_dir.mkdir(parents=True, exist_ok=True)
         ruas_path = ruas_dir / "ruas_osm_detalhadas.gpkg"
@@ -287,6 +288,233 @@ def extrair_ruas_overpass(quadras, out_dir):
         print(f"✅ Camada de ruas detalhadas exportada: {ruas_path} (feições: {len(gdf)})")
     else:
         print("⚠️ Nenhuma via retornada. Tente expandir a área.")
+
+
+def _bearing_of_segment(line, ref_pt):
+    # pega o segmento mais próximo do ponto de referência e calcula o azimute
+    coords = list(line.coords)
+    if len(coords) < 2:
+        return None
+    # escolhe o par (u,v) com menor distância ao ref_pt
+    best = None; bestd = 1e18
+    for i in range(len(coords)-1):
+        seg = gpd.GeoSeries.from_wkt([ ]);  # placeholder to please linters
+        p1 = np.array(coords[i]);  p2 = np.array(coords[i+1])
+        # ponto médio do segmento
+        mid = (p1 + p2)/2.0
+        d = (mid[0]-ref_pt.x)**2 + (mid[1]-ref_pt.y)**2
+        if d < bestd:
+            bestd = d; best = (p1,p2)
+    (x1,y1),(x2,y2) = best
+    ang = np.degrees(np.arctan2(y2-y1, x2-x1)) % 180.0  # direção de via, sem sentido
+    return ang
+
+def atribuir_ruas_e_esquinas_precision(
+        upload_dir,
+        arquivo_final_nome="final.shp",
+        epsg_lotes=31983,
+        base_buffer=9,
+        min_testada=1.0,
+        min_delta_graus=30.0
+    ):
+    """
+    Atribui:
+      - Rua: todas as ruas que tocam o lote, em uma string separada por vírgula
+      - Esquina: True/False baseado em ângulo das vias e múltiplas testadas
+    Salva em final/final_gpkg.gpkg.
+    """
+
+    # 1) Carregar dados
+    lotes = gpd.read_file(upload_dir / "final" / arquivo_final_nome)
+    ruas  = gpd.read_file(upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg")
+
+    # 2) Garantir CRS
+    if not lotes.crs:
+        lotes.set_crs(epsg=epsg_lotes, inplace=True)
+
+    if not ruas.crs:
+        ruas.set_crs(epsg=4326, inplace=True)
+
+    ruas = ruas.to_crs(lotes.crs)
+
+    # 3) Manter somente ruas com nome
+    ruas = ruas[ruas["name"].notna()].copy()
+    if len(ruas) == 0:
+        print("⚠ Nenhuma rua com nome encontrada.")
+        lotes["Rua"] = None
+        lotes["Esquina"] = False
+        out = upload_dir / "final" / "final_gpkg.gpkg"
+        lotes.to_file(out, driver="GPKG", encoding="utf-8")
+        return out
+
+    # 4) Dissolver ruas por nome + buffer
+    ruas_dis = ruas.dissolve(by="name", as_index=False, aggfunc="first")
+    ruas_dis["geometry"] = ruas_dis.buffer(base_buffer)
+    sidx = ruas_dis.sindex
+
+    # --- helpers internos ---
+    def compute_testada(lote_geom, rua_geom):
+        borda = lote_geom.boundary
+        inter = borda.intersection(rua_geom)
+        if inter.is_empty:
+            return 0.0
+        if inter.geom_type == "LineString":
+            return inter.length
+        if inter.geom_type == "MultiLineString":
+            return sum(g.length for g in inter.geoms)
+        return 0.0
+
+    def compute_rua_angle(lote_geom, rua_name):
+        eixo = ruas[ruas["name"] == rua_name].union_all()
+        ref_pt = nearest_points(lote_geom, eixo)[0]
+
+        if eixo.geom_type == "MultiLineString":
+            seg = min(eixo.geoms, key=lambda g: g.distance(lote_geom))
+        else:
+            seg = eixo
+
+        return _bearing_of_segment(seg, ref_pt)
+
+    # 6) Processar lotes
+    ruas_str_final = []
+    esquina_final = []
+
+    for _, lote in lotes.iterrows():
+        lote_geom = lote.geometry
+
+        # candidatos pelo bbox
+        idxs = list(sidx.intersection(lote_geom.bounds))
+        cand_ruas = ruas_dis.iloc[idxs]
+
+        touched = []
+        angulos = []
+
+        for _, r in cand_ruas.iterrows():
+            testada = compute_testada(lote_geom, r.geometry)
+            if testada >= min_testada:
+                nome = r["name"]
+                touched.append(nome)
+                ang = compute_rua_angle(lote_geom, nome)
+                if ang is not None:
+                    angulos.append(ang)
+
+        # nomes únicos ordenados
+        touched = sorted(set(touched))
+
+        # Rua: todas as ruas em uma string separada por vírgula
+        if len(touched) == 0:
+            ruas_str_final.append(None)
+        else:
+            ruas_str_final.append(", ".join(touched))
+
+        # Esquina: múltiplas ruas com ângulo bem diferente
+        if len(angulos) >= 2:
+            deltas = []
+            for i in range(len(angulos)):
+                for j in range(i+1, len(angulos)):
+                    d = abs(angulos[i] - angulos[j])
+                    d = min(d, 180 - d)
+                    deltas.append(d)
+            esquina_final.append(max(deltas) >= min_delta_graus)
+        else:
+            esquina_final.append(False)
+
+    # 7) Guardar nos lotes
+    lotes["Rua"] = ruas_str_final
+    lotes["Esquina"] = esquina_final
+
+    # 8) Exportar final
+    out = upload_dir / "final" / "final_gpkg.gpkg"
+    lotes.to_file(out, driver="GPKG", encoding="utf-8")
+    print(f"✅ final_gpkg.gpkg gerado com campos Rua e Esquina. Lotes: {len(lotes)}")
+    return out
+
+
+def atribuir_ruas_e_esquinas(upload_dir, arquivo_final_nome="final.shp", buffer_rua=5):
+    """
+    Atribui a(s) rua(s) correspondente(s) e detecta se cada lote é de esquina.
+    Cria um arquivo final.gpkg com as colunas adicionais: 'Rua' e 'Esquina'.
+
+    Parâmetros
+    ----------
+    upload_dir : Path
+        Diretório base do processamento (contém 'ruas/' e 'final/').
+    arquivo_final_nome : str
+        Nome do shapefile final gerado antes desta etapa (padrão: 'final.shp').
+    buffer_rua : float
+        Tamanho do buffer em metros aplicado às ruas para detectar contato.
+    """
+    try:
+        print("🏷️ Atribuindo ruas e detectando lotes de esquina...")
+
+        ruas_path = upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg"
+        final_path = upload_dir / "final" / arquivo_final_nome
+        final_gpkg = upload_dir / "final" / "final_gpkg.gpkg"
+
+        if not ruas_path.exists():
+            raise FileNotFoundError(f"Camada de ruas não encontrada: {ruas_path}")
+        if not final_path.exists():
+            raise FileNotFoundError(f"Camada de lotes não encontrada: {final_path}")
+
+        # Carrega camadas
+        gdf_ruas = gpd.read_file(ruas_path)
+        gdf_lotes = gpd.read_file(final_path)
+
+        # Garante que ambas estão no mesmo CRS
+        if not gdf_lotes.crs:
+            print("⚠️ CRS dos lotes indefinido. Definindo como EPSG:31983.")
+            gdf_lotes.set_crs(epsg=31983, inplace=True)
+
+        if not gdf_ruas.crs:
+            print("⚠️ CRS das ruas indefinido. Definindo como EPSG:4326 (padrão OSM).")
+            gdf_ruas.set_crs(epsg=4326, inplace=True)
+
+        # Agora reprojeta corretamente
+        gdf_ruas = gdf_ruas.to_crs(gdf_lotes.crs)
+
+        # Buffer pequeno nas ruas (para garantir contato)
+        gdf_ruas["geometry"] = gdf_ruas.buffer(buffer_rua)
+
+        # Cria índice espacial
+        sindex_ruas = gdf_ruas.sindex
+
+        # Listas para resultados
+        ruas_col = []
+        esquina_col = []
+
+        for _, lote in gdf_lotes.iterrows():
+            # Seleciona ruas próximas (via bounding box)
+            possible_idx = list(sindex_ruas.intersection(lote.geometry.bounds))
+            possiveis = gdf_ruas.iloc[possible_idx]
+
+            # Filtra ruas que realmente tocam o lote
+            ruas_tocadas = possiveis[possiveis.intersects(lote.geometry)]
+
+            # Nomes distintos
+            nomes = sorted(set(r.strip() for r in ruas_tocadas["name"].dropna()))
+
+            # Define campos
+            ruas_col.append(", ".join(nomes) if nomes else None)
+            esquina_col.append(len(nomes) >= 2)
+
+        # Adiciona novas colunas
+        gdf_lotes["Rua"] = ruas_col
+        gdf_lotes["Rua_lista"] = gdf_lotes["Rua"].apply(lambda x: ";".join(x.split(", ")) if isinstance(x, str) and "," in x else x)
+        gdf_lotes["Esquina"] = esquina_col
+
+        # Salva no formato final.gpkg
+        final_dir = upload_dir / "final"
+        final_dir.mkdir(parents=True, exist_ok=True)
+        gdf_lotes.to_file(final_gpkg, driver="GPKG", encoding="utf-8")
+
+        print(f"✅ Atribuição concluída! Arquivo exportado: {final_gpkg}")
+        print(f"   Lotes: {len(gdf_lotes)} | Esquinas detectadas: {sum(esquina_col)}")
+
+        return final_gpkg
+
+    except Exception as e:
+        print(f"⚠️ Erro na atribuição de ruas e detecção de esquinas: {e}")
+        raise
 
 def create_final_gpkg(layer_path: Path) -> Path:
     """

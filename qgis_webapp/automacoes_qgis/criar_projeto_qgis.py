@@ -220,6 +220,10 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                     widget = QgsEditorWidgetSetup("TextEdit", {"IsMultiline": False})
                 layer.setEditorWidgetSetup(idx, widget)
 
+            # Campo Rua
+            print("🔎 Campos encontrados no layer final:")
+            print([f.name() for f in layer.fields()])
+
             # Esconder campos CAD
             hide_fields = ["Layer", "PaperSpace", "Text", "Linetype", "EntityHand", "SubClasses"]
             for field_name in hide_fields:

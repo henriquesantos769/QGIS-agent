@@ -12,7 +12,7 @@ from .pipeline import (
     dxf_to_shp, corrigir_e_snap, linhas_para_poligonos, dissolve_para_quadras,
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
-    converter_ecw_para_tif_reduzido
+    converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -144,8 +144,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         session.session_data = Session.objects.encode(data)
         session.save()
 
-        atualizar_progresso_thread(session_key, 15, "🧩 Criando GeoPackage...")
-        create_final_gpkg(paths["arquivo_final"])
+        atualizar_progresso_thread(session_key, 15, "🏷️ Atribuindo ruas e detectando lotes de esquina...")
+        atribuir_ruas_e_esquinas_precision(upload_dir)
 
         atualizar_progresso_thread(session_key, 16, "🗺️ Criando projeto QGIS final...")
         create_final_project(upload_dir, ortho_path=ortho_path)
@@ -210,7 +210,7 @@ def criar_projeto_qgis(request):
             try:
                 atualizar_progresso(request, 2.5, "🧩 Convertendo ortofoto ECW para TIFF reduzido (pode demorar)...")
                 # ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=96)
-                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=70)
+                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=2)
                 print(f"✅ Ortofoto convertida automaticamente: {ortho_path.name}")
             except Exception as e:
                 print(f"⚠️ Erro ao converter ECW: {e}")
