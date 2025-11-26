@@ -8,3 +8,4 @@ gunicorn==22.0.0
 Django
 psycopg2-binary
 geopandas
+python-docx
