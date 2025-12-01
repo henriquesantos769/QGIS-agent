@@ -21,7 +21,8 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-     path('', include('automacoes_qgis.urls')),
+    path('', include('automacoes_qgis.urls')),
+    path("memoriais/", include("automacoes_memoriais.urls")),
 ]
 
 if settings.DEBUG:

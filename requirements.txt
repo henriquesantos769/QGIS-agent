@@ -9,3 +9,5 @@ Django
 psycopg2-binary
 geopandas
 python-docx
+qfieldcloud_sdk
+python-dotenv
