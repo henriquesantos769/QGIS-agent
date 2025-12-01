@@ -10,7 +10,7 @@ from .pipeline import (
     dxf_to_shp, corrigir_e_snap, linhas_para_poligonos, dissolve_para_quadras,
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
-    atribuir_ruas_e_esquinas_precision, calcular_medidas_e_azimutes, gerar_memoriais_em_lote,
+    atribuir_ruas_e_esquinas_precision, atribuir_ruas_frente, calcular_medidas_e_azimutes, gerar_memoriais_em_lote,
     gerar_confrontacoes
 )
 from io import BytesIO
@@ -136,7 +136,7 @@ def executar_pipeline(upload_dir, dxf_path, session_key):
         session.save()
 
         atualizar_progresso_thread(session_key, 14, "🏷️ Atribuindo ruas e detectando lotes de esquina...")
-        atribuir_ruas_e_esquinas_precision(upload_dir)
+        atribuir_ruas_frente(upload_dir)
 
         atualizar_progresso_thread(session_key, 15, "📐 Gerando confrontações dos lotes...")
         gerar_confrontacoes(upload_dir)

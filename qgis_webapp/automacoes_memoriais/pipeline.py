@@ -824,8 +824,10 @@ def gerar_confrontacoes(upload_dir,
                 if il == idx:
                     continue
                 other = gdf_lotes.iloc[il]
-                if other.geometry.intersects(line):
-                    nome_lote_vizinho = f"Lote {other.get('lote_num')} - Quadra {other.get('quadra')}"
+                inter = other.geometry.intersection(line)
+
+                if not inter.is_empty and inter.length > 0:
+                    nome_lote_vizinho = f"Lote {other.get('lote_num')}"
                     break
 
             # Tipo de segmento
@@ -1039,105 +1041,140 @@ def calcular_medidas_e_azimutes(upload_dir,
     return out
 
 
-def _memorial_lote_completo(row,
-                            nucleo: str,
-                            municipio: str,
-                            uf: str) -> str:
+def _memorial_lote_completo(row, nucleo, municipio, uf):
     """
-    Gera o texto contínuo do memorial de UM lote, no estilo:
-
-    '... inicia-se na coordenada (EX: ..., NY: ...), com uma distância de X,XX m de frente ...'
+    Gera memorial descritivo completo, sentido horário, estilo REURB,
+    incluindo coordenadas (EX/NY), distâncias e confrontações por segmento.
     """
 
     geom = row.geometry
     if geom is None or geom.is_empty:
-        return "Geometria do lote não disponível para descrição."
+        return "Geometria indisponível para descrição."
 
     quadra = row.get("quadra")
-    lote_num = row.get("lote_num")
+    lote = row.get("lote_num")
 
-    area_m2 = geom.area
-    perimetro_m = geom.length
-
-    # Coordenadas do polígono (sem repetir o último vértice)
     coords = list(geom.exterior.coords)
-    if len(coords) > 1 and coords[0] == coords[-1]:
+    if coords[0] == coords[-1]:
         coords = coords[:-1]
 
-    if len(coords) < 3:
-        return "Geometria do lote não possui vértices suficientes para descrição."
-
-    # Confrontantes já calculados no pipeline
-    conf_frente = row.get("Conf_Frente") or row.get("LadoFrente") or row.get("Rua") or "via pública ou lote confrontante"
-    conf_dir    = row.get("Conf_Direita") or "o lote lindeiro do lado direito"
-    conf_fundo  = row.get("Conf_Fundos") or "o lote de fundos confrontante"
-    conf_esq    = row.get("Conf_Esquerda") or "o lote lindeiro do lado esquerdo"
-
-    texto_partes = []
-
-    # Introdução geral – área + perímetro
-    intro = (
-        f"O Lote de terreno sob nº {lote_num} da Quadra {quadra}, "
-        f"do Núcleo denominado “{nucleo}”, no município de {municipio} - {uf}, "
-        f"de formato irregular, abrangendo uma área de {_fmt_num_br(area_m2, 2)} m² "
-        f"e um perímetro de {_fmt_num_br(perimetro_m, 2)} m."
-    )
-    texto_partes.append(intro)
-
     n = len(coords)
+    if n < 3:
+        return "Lote com geometria insuficiente para descrição."
+
+    # Confrontações calculadas pelo pipeline
+    frente_conf = row.get("Conf_Frente")
+    dir_conf    = row.get("Conf_Direita")
+    fundo_conf  = row.get("Conf_Fundos")
+    esq_conf    = row.get("Conf_Esquerda")
+
+    # -----------------------------------------------------
+    # Helper: formata coordenadas
+    # -----------------------------------------------------
+    def fmt_coord(v):
+        return format(float(v), ",.4f").replace(",", "X").replace(".", ",").replace("X", ".")
+
+    # -----------------------------------------------------
+    # Determina confrontação por lado (sentido horário)
+    # -----------------------------------------------------
+    def lado_confronto(idx):
+        if idx == 0:
+            return frente_conf or "Área não identificada"
+        elif idx == 1:
+            return dir_conf or "Área não identificada"
+        elif idx == 2:
+            return fundo_conf or "Área não identificada"
+        elif idx == 3:
+            return esq_conf or "Área não identificada"
+        return "Área não identificada"
+
+    # -----------------------------------------------------
+    # Determina tipo do lado (para frase)
+    # -----------------------------------------------------
+    def nome_lado(idx):
+        if idx == 0:
+            return "de frente"
+        elif idx == 1:
+            return "do lado direito"
+        elif idx == 2:
+            return "ao fundo"
+        elif idx == 3:
+            return "do lado esquerdo"
+        return "pelo perímetro"
+
+    # -----------------------------------------------------
+    # Determina direção da deflexão
+    # -----------------------------------------------------
+    def deflexao(idx):
+        if idx == 0:
+            return ""  # primeiro lado não tem deflexão
+        # sentido horário
+        # 0→1 direita / 1→2 direita / 2→3 direita / 3→0 direita
+        return "deste ponto deflete à direita"
+
+    # -----------------------------------------------------
+    # Introdução
+    # -----------------------------------------------------
+    area = geom.area
+    perim = geom.length
+
+    intro = (
+        f"O lote de terreno sob nº {lote} da Quadra {quadra}, do Núcleo denominado "
+        f"“{nucleo}”, no município de {municipio} - {uf}, de formato irregular, "
+        f"abrangendo uma área de {format(area, ',.2f').replace(',', 'X').replace('.', ',').replace('X', '.')} m² "
+        f"e um perímetro de {format(perim, ',.2f').replace(',', 'X').replace('.', ',').replace('X', '.')} m.\n"
+    )
+
+    partes = [intro]
+
+    # -----------------------------------------------------
+    # Percorre todos os lados em sentido horário
+    # -----------------------------------------------------
     for i in range(n):
-        (x1, y1) = coords[i]
-        (x2, y2) = coords[(i + 1) % n]
+        x1, y1 = coords[i]
+        x2, y2 = coords[(i + 1) % n]
 
-        p1 = Point(x1, y1)
-        p2 = Point(x2, y2)
-        dist = p1.distance(p2)
+        dist = Point(x1, y1).distance(Point(x2, y2))
 
-        coord1 = f"(EX: {_fmt_coord(x1)} NY: {_fmt_coord(y1)})"
-        coord2 = f"(EX: {_fmt_coord(x2)} NY: {_fmt_coord(y2)})"
+        coord1 = f"(EX: {fmt_coord(x1)}  NY: {fmt_coord(y1)})"
+        coord2 = f"(EX: {fmt_coord(x2)}  NY: {fmt_coord(y2)})"
 
-        # Primeiro lado = frente
+        confronto = lado_confronto(i)
+        tipo_lado = nome_lado(i)
+        frase_deflexao = deflexao(i)
+
+        dist_fmt = format(dist, ",.2f").replace(",", "X").replace(".", ",").replace("X", ".")
+
+        # -------------------------------------------------
+        # Montagem da frase
+        # -------------------------------------------------
         if i == 0:
-            texto_seg = (
-                f" Para quem de dentro do lote {lote_num} olha para {conf_frente}, "
+            # 🔹 PRIMEIRO SEGMENTO
+            # Sem espaço no começo, termina com vírgula
+            texto = (
+                f"Para quem de dentro do lote {lote} olha para {confronto} "
                 f"inicia-se a descrição na coordenada {coord1}, "
-                f"com uma distância de {_fmt_num_br(dist, 2)} m de frente "
-                f"até a coordenada {coord2}, confrontando com {conf_frente}."
+                f"com uma distância de {dist_fmt} m {tipo_lado} "
+                f"até a coordenada {coord2}, confrontando com {confronto}, "
             )
-
-        # Segundo lado = direita
-        elif i == 1:
-            texto_seg = (
-                f" Deste ponto, deflete à direita com uma distância de {_fmt_num_br(dist, 2)} m "
-                f"do lado direito até a coordenada {coord2}, confrontando com {conf_dir}."
+        elif i < n - 1:
+            # 🔹 SEGMENTOS INTERMEDIÁRIOS
+            # Começa com "deste ponto ...", termina com vírgula
+            texto = (
+                f"deste ponto {frase_deflexao} com uma distância de {dist_fmt} m {tipo_lado} "
+                f"até a coordenada {coord2}, confrontando com {confronto},"
             )
-
-        # Terceiro lado = fundos
-        elif i == 2:
-            texto_seg = (
-                f" Deste ponto, deflete novamente, seguindo pelos fundos com uma distância de "
-                f"{_fmt_num_br(dist, 2)} m até a coordenada {coord2}, confrontando com {conf_fundo}."
-            )
-
-        # Quarto lado = esquerda
-        elif i == 3:
-            texto_seg = (
-                f" Deste ponto, deflete à esquerda com uma distância de {_fmt_num_br(dist, 2)} m "
-                f"do lado esquerdo até a coordenada {coord2}, confrontando com {conf_esq}, "
-                f"retornando ao ponto inicial da descrição do perímetro do lote."
-            )
-
-        # Lados adicionais (polígono com mais de 4 vértices)
         else:
-            texto_seg = (
-                f" Em seguida, segue com uma distância de {_fmt_num_br(dist, 2)} m "
-                f"até a coordenada {coord2}, confrontando com o limite do lote."
+            # 🔹 ÚLTIMO SEGMENTO
+            # Termina com ponto e vírgula
+            texto = (
+                f"deste ponto {frase_deflexao} com uma distância de {dist_fmt} m {tipo_lado} "
+                f"até a coordenada {coord2}, confrontando com {confronto};"
             )
 
-        texto_partes.append(texto_seg)
+        partes.append(texto)
 
-    return " ".join(texto_partes)
-
+    return " ".join(partes)
 
 def gerar_memorial_quadra(upload_dir: Path,
                           arquivo_final_nome: str,
@@ -1185,10 +1222,10 @@ def gerar_memorial_quadra(upload_dir: Path,
     # Título "DESCRIÇÃO"
     p_desc_titulo = doc.add_paragraph()
     p_desc_titulo.alignment = 1  # centralizado
-    run_desc = p_desc_titulo.add_run("DESCRIÇÃO")
-    run_desc.bold = True
+    #run_desc = p_desc_titulo.add_run("DESCRIÇÃO")
+    #run_desc.bold = True
 
-    doc.add_paragraph()
+    #doc.add_paragraph()
 
     for _, row in lotes_quadra.iterrows():
         quadra = row.get("quadra")
@@ -1199,15 +1236,16 @@ def gerar_memorial_quadra(upload_dir: Path,
 
         # Título do lote dentro da quadra
         p_header_lote = doc.add_paragraph()
-        run = p_header_lote.add_run(f"Quadra: {quadra} - Lote: {lote_num}")
+        run = p_header_lote.add_run(f"Quadra: {quadra}\nLote: {lote_num}")
         run.bold = True
 
         # Área/perímetro destacados
-        p_info = doc.add_paragraph()
         if area_m2 is not None:
-            p_info.add_run(f"Área: {_fmt_num_br(area_m2, 2)} m²\n")
+            run2 = p_header_lote.add_run(f"\nÁrea: {_fmt_num_br(area_m2, 2)} m²\n")
+            run2.bold = True
         if perimetro_m is not None:
-            p_info.add_run(f"Perímetro: {_fmt_num_br(perimetro_m, 2)} m\n")
+            pass
+            #p_info.add_run(f"Perímetro: {_fmt_num_br(perimetro_m, 2)} m\n")
 
         doc.add_paragraph()
 

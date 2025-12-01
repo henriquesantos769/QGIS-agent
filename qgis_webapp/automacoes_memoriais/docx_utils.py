@@ -50,9 +50,3 @@ def _add_cabecalho_memorial(doc: Document,
                 loc += f" - {uf}"
             t.add_run(loc)
 
-    doc.add_paragraph()  # espaço
-    p3 = doc.add_paragraph()
-    r3 = p3.add_run("DESCRIÇÃO")
-    r3.bold = True
-    p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph()
