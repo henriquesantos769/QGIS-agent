@@ -148,7 +148,7 @@ async function monitorarProgresso() {
   const detail = document.getElementById("detailLine");
   const stageChip = document.getElementById("stageChip");
 
-  const TOTAL_ETAPAS = 18;
+  const TOTAL_ETAPAS = 20;
   monitoramentoAtivo = true;
 
   async function atualizar() {
