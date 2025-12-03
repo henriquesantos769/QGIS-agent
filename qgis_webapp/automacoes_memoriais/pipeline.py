@@ -1,7 +1,8 @@
 import geopandas as gpd
-from .docx_utils import _fmt_num_br, _fmt_coord, _add_cabecalho_memorial
+from .docx_utils import (_fmt_num_br, _fmt_coord, _add_cabecalho_memorial, fmt_coord,
+                         fmt_dist, azimute_dms,add_cabecalho_memorial_quadras, add_bloco_info_quadra)
 from docx import Document
-from shapely.geometry import LineString, shape, Point
+from shapely.geometry import LineString, shape, Point, Polygon
 import math
 from pathlib import Path
 from docx.shared import Pt
@@ -20,6 +21,7 @@ from shapely.ops import nearest_points
 import json
 import requests
 import numpy as np
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 Processing.initialize()
 QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
@@ -831,15 +833,15 @@ def gerar_confrontacoes(upload_dir,
                     break
 
             # Tipo de segmento
-            if nome_rua_encostada:
-                tipo = "rua"
-                nome_conf = nome_rua_encostada
-            elif nome_lote_vizinho:
+            if nome_lote_vizinho:
                 tipo = "lote"
                 nome_conf = nome_lote_vizinho
-            else:
-                tipo = "limite"
-                nome_conf = "Limite"
+            elif nome_rua_encostada:
+                tipo = "rua"
+                nome_conf = nome_rua_encostada
+            #else:
+            #    tipo = "limite"
+            #    nome_conf = "Limite"
 
             seg_infos.append({
                 "seg": seg,
@@ -1259,6 +1261,7 @@ def gerar_memorial_quadra(upload_dir: Path,
 
         p_desc_lote = doc.add_paragraph()
         p_desc_lote.paragraph_format.first_line_indent = Pt(12)
+        p_desc_lote.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         p_desc_lote.add_run(texto_lote)
 
         doc.add_paragraph()  # espaço entre lotes
@@ -1317,3 +1320,457 @@ def gerar_memoriais_em_lote(upload_dir: Path,
         print("  -", p)
 
     return paths_gerados
+
+def gerar_geometrias_quadras(
+    upload_dir: Path,
+    arquivo_final_nome: str = "final_medidas_azimutes.gpkg",
+    epsg_lotes: int = 31983,
+    saida_nome: str = "quadras_contorno.gpkg"
+) -> Path:
+    """
+    Gera o contorno de cada quadra a partir dos lotes,
+    unindo os polígonos e calculando área e perímetro da quadra.
+
+    Saída: GPKG em upload_dir / "final" / saida_nome
+    com colunas:
+      - quadra
+      - geometry (polígono da quadra)
+      - area_q  (área da quadra)
+      - perim_q (perímetro da quadra)
+    """
+    final_path = upload_dir / "final" / arquivo_final_nome
+    if not final_path.exists():
+        raise FileNotFoundError(f"Arquivo de lotes não encontrado: {final_path}")
+
+    gdf_lotes = gpd.read_file(final_path)
+
+    if "quadra" not in gdf_lotes.columns:
+        raise ValueError("Coluna 'quadra' não encontrada no arquivo de lotes.")
+
+    # Garantir CRS
+    if not gdf_lotes.crs:
+        gdf_lotes.set_crs(epsg=epsg_lotes, inplace=True)
+
+    quadra_records = []
+
+    # Agrupa lotes por quadra
+    for quadra_val, sub in gdf_lotes.groupby("quadra"):
+        geoms = [g for g in sub.geometry if g is not None]
+
+        if not geoms:
+            continue
+
+        # União das geometrias da quadra
+        uni = unary_union(geoms)
+
+        # Limpar geometrias zoadas
+        uni = uni.buffer(0)
+
+        # Se ainda for MultiPolygon, pega o maior polígono como contorno principal
+        if uni.geom_type == "MultiPolygon":
+            uni = max(uni.geoms, key=lambda g: g.area)
+
+        # Se ainda for GeometryCollection / outra coisa, tentar convex hull
+        if not isinstance(uni, Polygon):
+            uni = uni.convex_hull
+
+        area_q = uni.area
+        perim_q = uni.length
+
+        quadra_records.append({
+            "quadra": quadra_val,
+            "geometry": uni,
+            "area_q": area_q,
+            "perim_q": perim_q,
+        })
+
+    if not quadra_records:
+        raise RuntimeError("Não foi possível gerar geometrias de quadra (lista vazia).")
+
+    gdf_quadras = gpd.GeoDataFrame(quadra_records, geometry="geometry", crs=gdf_lotes.crs)
+
+    out_path = upload_dir / "final" / saida_nome
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    gdf_quadras.to_file(out_path, driver="GPKG", encoding="utf-8")
+
+    print(f"✅ Geometrias de quadra geradas: {out_path} (quadras: {len(gdf_quadras)})")
+    return out_path
+
+def segmentar_quadra_com_confrontantes(
+    upload_dir: Path,
+    quadras_gpkg: str = "quadras_contorno.gpkg",
+    lotes_gpkg: str = "final_medidas_azimutes.gpkg",
+    ruas_gpkg: str = "ruas_osm_detalhadas.gpkg",
+    buffer_rua: float = 9.0
+):
+    """
+    Segmenta cada quadra em trechos individuais e determina
+    o confrontante de cada segmento: rua, lote ou limite.
+
+    Retorna um GeoDataFrame com:
+      quadra, seq, geometry, azimute, comprimento,
+      x1, y1, x2, y2,
+      tipo ('rua' | 'lote' | 'limite'),
+      confronto (nome da rua ou 'Lote xx' ou 'Limite')
+    """
+
+    # ----------------------------------------------------------
+    # Carregar camadas
+    # ----------------------------------------------------------
+    quadras_path = upload_dir / "final" / quadras_gpkg
+    lotes_path   = upload_dir / "final" / lotes_gpkg
+    ruas_path    = upload_dir / "ruas" / ruas_gpkg
+
+    gdf_quadras = gpd.read_file(quadras_path)
+    gdf_lotes   = gpd.read_file(lotes_path)
+    gdf_ruas    = gpd.read_file(ruas_path)
+
+    crs = gdf_quadras.crs
+    gdf_lotes = gdf_lotes.to_crs(crs)
+    gdf_ruas  = gdf_ruas.to_crs(crs)
+
+    # buffer das ruas para facilitar interseção
+    gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(buffer_rua)
+    sidx_ruas  = gdf_ruas.sindex
+    sidx_lotes = gdf_lotes.sindex
+
+    registros = []
+
+    # ----------------------------------------------------------
+    # Processar quadra por quadra
+    # ----------------------------------------------------------
+    for _, qrow in gdf_quadras.iterrows():
+        quadra = qrow["quadra"]
+        geom = qrow.geometry
+
+        coords = list(geom.exterior.coords)
+
+        # cada vértice vira um segmento p1->p2
+        segmentos = []
+        for i in range(len(coords) - 1):
+            x1,y1 = coords[i]
+            x2,y2 = coords[i+1]
+
+            line = LineString([(x1,y1),(x2,y2)])
+            dx = x2 - x1
+            dy = y2 - y1
+            az = (math.degrees(math.atan2(dy, dx)) + 360) % 360
+            dist = line.length
+
+            segmentos.append({
+                "quadra": quadra,
+                "seq": i + 1,
+                "geometry": line,
+                "azimute": az,
+                "comprimento": dist,
+                "x1": x1, "y1": y1,
+                "x2": x2, "y2": y2
+            })
+
+        # ----------------------------------------------------------
+        # Determinar confrontantes
+        # ----------------------------------------------------------
+        for seg in segmentos:
+            line = seg["geometry"]
+
+            # — Rua?
+            rua_nome = None
+            bbox = list(sidx_ruas.intersection(line.bounds))
+
+            for idx_r in bbox:
+                rr = gdf_ruas.iloc[idx_r]
+                if rr["geom_buff"].intersects(line):
+                    if rr.get("name"):
+                        rua_nome = rr["name"]
+                        break
+
+            # — Lote?
+            lote_conf = None
+            if rua_nome is None:
+                bbox2 = list(sidx_lotes.intersection(line.bounds))
+                for idx_l in bbox2:
+                    lote = gdf_lotes.iloc[idx_l]
+                    if lote.geometry.intersects(line):
+                        lote_conf = f"Lote {lote.get('lote_num')} - Quadra {lote.get('quadra')}"
+                        break
+
+            if rua_nome:
+                seg["tipo"] = "rua"
+                seg["confronto"] = rua_nome
+            #elif lote_conf:
+            #    seg["tipo"] = "lote"
+            #    seg["confronto"] = lote_conf
+            #else:
+            #    seg["tipo"] = "limite"
+            #    seg["confronto"] = "Limite"
+
+                registros.append(seg)
+
+    gdf = gpd.GeoDataFrame(registros, geometry="geometry", crs=crs)
+
+    # salvar
+    out_path = upload_dir / "final" / "quadras_segmentos.gpkg"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    gdf.to_file(out_path, driver="GPKG", encoding="utf-8")
+
+    print(f"✅ Segmentos de quadras gerados: {out_path}")
+    return gdf
+
+def calcular_deflexoes_segmentos(
+    upload_dir: Path,
+    seg_gpkg: str = "quadras_segmentos.gpkg"
+):
+    """
+    Lê os segmentos de quadras e adiciona:
+      - deflexão entre trechos ('direita' ou 'esquerda')
+      - tipo_lado (frente, direita, esquerda, fundos, perímetro)
+      - delta (valor do giro)
+      - flag é_primeiro (para o trecho inicial)
+    """
+
+    path = upload_dir / "final" / seg_gpkg
+    gdf = gpd.read_file(path)
+
+    registros_final = []
+
+    for quadra in sorted(gdf["quadra"].unique(), key=lambda x: str(x)):
+        sub = gdf[gdf["quadra"] == quadra].copy()
+        sub = sub.sort_values("seq").reset_index(drop=True)
+
+        N = len(sub)
+
+        # percorre todos os segmentos
+        for i in range(N):
+            row = sub.loc[i]
+
+            az1 = row["azimute"]
+            comprimento = row["comprimento"]
+            tipo_conf = row["tipo"]
+            nome_conf = row["confronto"]
+
+            # ----------------------------------------------------
+            # calcular próximo azimute (para deflexão)
+            # ----------------------------------------------------
+            if i < N - 1:
+                az2 = sub.loc[i+1, "azimute"]
+            else:
+                az2 = sub.loc[0, "azimute"]  # volta ao início
+
+            delta = (az2 - az1 + 360) % 360
+
+            if 0 < delta < 180:
+                deflex = "à direita"
+            else:
+                deflex = "à esquerda"
+
+            # ----------------------------------------------------
+            # tipo de lado — baseado no confrontante
+            # ----------------------------------------------------
+            if tipo_conf == "rua":
+                tipo_lado = "de frente"
+            elif tipo_conf == "lote":
+                tipo_lado = "do lado direito"  # pode melhorar depois
+            elif tipo_conf == "limite":
+                tipo_lado = "pelo perímetro"
+            else:
+                tipo_lado = ""
+
+            registros_final.append({
+                "quadra": quadra,
+                "seq": row["seq"],
+                "geometry": row.geometry,
+                "x1": row["x1"],
+                "y1": row["y1"],
+                "x2": row["x2"],
+                "y2": row["y2"],
+                "comprimento": comprimento,
+                "azimute": az1,
+                "delta": delta,
+                "deflexao": deflex,
+                "tipo": tipo_conf,
+                "tipo_lado": tipo_lado,
+                "confronto": nome_conf,
+                "primeiro": (i == 0)
+            })
+
+    gdf_out = gpd.GeoDataFrame(registros_final, geometry="geometry", crs=gdf.crs)
+
+    out_path = upload_dir / "final" / "quadras_segmentos_deflex.gpkg"
+    gdf_out.to_file(out_path, driver="GPKG", encoding="utf-8")
+
+    print(f"✅ Deflexões calculadas e salvas em: {out_path}")
+    return gdf_out
+
+def carregar_quadras_poligono(upload_dir: Path):
+    """
+    Carrega a camada de quadras como POLÍGONOS e garante que possui CRS.
+    Tenta automaticamente os arquivos comuns do pipeline.
+    """
+
+    candidatos = [
+        upload_dir / "quadras" / "quadras.shp",
+        upload_dir / "quadras" / "quadras_m2s.shp",
+        upload_dir / "quadras" / "quadras_dissolve.shp",
+    ]
+
+    for path in candidatos:
+        if path.exists():
+            print(f"🔎 Tentando carregar quadras: {path}")
+            gdf = gpd.read_file(path)
+
+            # Caso não tenha CRS
+            if gdf.crs is None:
+                print("⚠ Quadras sem CRS — aplicando EPSG:31983")
+                gdf = gdf.set_crs(31983)
+
+            # Geometria deve ser Polygon ou MultiPolygon
+            if gdf.geom_type.isin(["Polygon", "MultiPolygon"]).any():
+                print(f"✅ Quadras carregadas com sucesso: {path}")
+                return gdf
+
+            else:
+                print(f"⚠ Arquivo não contém polígonos (tipo: {gdf.geom_type.unique()})")
+
+    raise FileNotFoundError(
+        "Nenhuma camada válida de quadras poligonais foi encontrada."
+    )
+
+def gerar_memorial_quadras_docx(
+        upload_dir: Path,
+        arquivo_segmentos="quadras_segmentos.gpkg",
+        nucleo="Teste",
+        municipio="Teste",
+        uf="Teste",
+        promotor="Instituto Cidade Legal",
+        saida_nome="memorial_quadras.docx"
+    ):
+    
+    path_seg = upload_dir / "final" / arquivo_segmentos
+    gdf = gpd.read_file(path_seg).sort_values(["quadra", "seq"])
+    gdf_area = carregar_quadras_poligono(upload_dir)
+
+    quadras = sorted(gdf["quadra"].unique(), key=lambda x: str(x))
+
+    doc = Document()
+
+    add_cabecalho_memorial_quadras(doc)
+
+    # Estilo do documento
+    estilo = doc.styles["Normal"]
+    estilo.font.name = "Arial"
+    estilo.font.size = Pt(11)
+
+    for quadra in quadras:
+        sub = gdf[gdf["quadra"] == quadra].copy().reset_index(drop=True)
+        sub_poly = gdf_area[gdf_area["quadra"] == quadra].copy().reset_index(drop=True)
+        # -----------------------------
+        # CALCULAR ÁREA E PERÍMETRO DA QUADRA
+        # -----------------------------
+        geom_quadra = sub_poly.geometry.union_all()
+
+        print("Quadra:", quadra)
+        print("Tipo:", geom_quadra.geom_type)
+        print("Is valid:", geom_quadra.is_valid)
+        print("Área bruta:", geom_quadra.area)
+        print("csr", gdf.crs)
+
+        # Corrige geometrias quebradas
+        if geom_quadra.is_empty:
+            print(f"⚠ Quadra {quadra}: geometria vazia ao dissolver.")
+        else:
+            geom_quadra = geom_quadra.buffer(0)
+
+        # Agora sim: área e perímetro verdadeiros
+        area_quadra = geom_quadra.area
+        print("AREA QUADRA:", area_quadra)
+        perimetro_quadra = sub.union_all().length
+
+        # -----------------------------
+        # BLOCO: QUADRA / ÁREA / PERÍMETRO
+        # -----------------------------
+        add_bloco_info_quadra(
+            doc,
+            quadra=quadra,
+            area_m2=area_quadra,
+            perimetro_m=perimetro_quadra
+        )
+
+        doc.add_paragraph()
+
+        # --------------------------
+        # INÍCIO DO TEXTÃO
+        # --------------------------
+
+        p = doc.add_paragraph()
+        p.paragraph_format.first_line_indent = Pt(20)
+        p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+
+        for i, row in sub.iterrows():
+
+            P1 = f"P{str(i+1).zfill(2)}"
+            P2 = f"P{str(i+2).zfill(2)}" if i < len(sub)-1 else "P01"
+
+            x1, y1 = row["x1"], row["y1"]
+            x2, y2 = row["x2"], row["y2"]
+            dist = row["comprimento"]
+            az = row["azimute"]
+            conf = row["confronto"]
+
+            coord1 = f"N {fmt_coord(y1)}m e E {fmt_coord(x1)}m"
+            coord2 = f"N {fmt_coord(y2)}m e E {fmt_coord(x2)}m"
+
+            az_dms = azimute_dms(az)
+            dist_fmt = fmt_dist(dist)
+
+            # Primeiro vértice
+            if i == 0:
+                texto = (
+                    f"Inicia-se a descrição desta quadra no vértice {P1}, "
+                    f"de coordenadas {coord1}; "
+                    f"deste, segue confrontando com {conf}, "
+                    f"com os seguintes azimutes e distâncias: "
+                    f"{az_dms} e {dist_fmt} m até o vértice {P2}, "
+                    f"de coordenadas {coord2}; "
+                )
+            elif i == len(sub)-1:
+                texto = (
+                    f" {az_dms} e {dist_fmt} m até o vértice P01, "
+                    f"ponto inicial da descrição deste perímetro."
+                )
+            else:
+                texto = (
+                    f"{az_dms} e {dist_fmt} m até o vértice {P2}, "
+                    f"de coordenadas {coord2}; "
+                )
+
+            run = p.add_run(texto)
+
+        # --------------------------
+        # Rodapé padrão da norma
+        # --------------------------
+
+        doc.add_paragraph()
+        rod = doc.add_paragraph()
+        rod.paragraph_format.first_line_indent = Pt(20)
+        rod.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        rod.add_run(
+            "Todas as coordenadas aqui descritas estão georreferenciadas ao Sistema Geodésico "
+            "Brasileiro, de coordenadas N m e E m, e encontram-se representadas no Sistema "
+            "U T M, referenciadas ao Meridiano Central n° 39º00', fuso -24, tendo como datum o "
+            "SIRGAS2000. Todos os azimutes, distâncias, área e perímetro foram calculados no "
+            "plano de projeção U T M."
+        )
+
+        doc.add_page_break()
+
+    # --------------------------
+    # Salvar DOCX final
+    # --------------------------
+    out_path = upload_dir / "memoriais" / saida_nome
+    out_path.parent.mkdir(exist_ok=True, parents=True)
+    doc.save(str(out_path))
+
+    print("✅ Memorial de quadras gerado com sucesso!")
+    print("Arquivo:", out_path)
+    return out_path
