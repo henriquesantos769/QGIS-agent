@@ -11,7 +11,8 @@ from .pipeline import (
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
     atribuir_ruas_e_esquinas_precision, atribuir_ruas_frente, calcular_medidas_e_azimutes, gerar_memoriais_em_lote,
-    gerar_confrontacoes
+    gerar_confrontacoes, gerar_memorial_quadras_docx, gerar_geometrias_quadras, segmentar_quadra_com_confrontantes,
+    calcular_deflexoes_segmentos
 )
 from io import BytesIO
 import zipfile
@@ -140,14 +141,22 @@ def executar_pipeline(upload_dir, dxf_path, session_key):
 
         atualizar_progresso_thread(session_key, 15, "📐 Gerando confrontações dos lotes...")
         gerar_confrontacoes(upload_dir)
-
+    
         atualizar_progresso_thread(session_key, 16, "📏 Calculando medidas e azimutes...")
         calcular_medidas_e_azimutes(upload_dir)
 
-        atualizar_progresso_thread(session_key, 17, "📝 Gerando memoriais das quadras...")
+        atualizar_progresso_thread(session_key, 17, "📝 Gerando memoriais dos lotes por quadra...")
         gerar_memoriais_em_lote(upload_dir)
 
-        atualizar_progresso_thread(session_key, 18, "🚀 Pipeline concluído com sucesso!")
+        atualizar_progresso_thread(session_key, 18, "📐 Processando Quadras...")
+        gerar_geometrias_quadras(upload_dir)
+        segmentar_quadra_com_confrontantes(upload_dir)
+        calcular_deflexoes_segmentos(upload_dir)
+
+        atualizar_progresso_thread(session_key, 19, "📝 Gerando memoriais das quadras...")
+        memorial_quadras_path = gerar_memorial_quadras_docx(upload_dir)
+
+        atualizar_progresso_thread(session_key, 20, "🚀 Pipeline concluído com sucesso!")   
 
     except Exception as e:
         atualizar_progresso_thread(session_key, 99, f"❌ Erro geral: {e}")
