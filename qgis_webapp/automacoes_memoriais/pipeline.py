@@ -9,7 +9,7 @@ from docx.shared import Pt
 from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-    QgsCoordinateTransformContext, QgsRasterLayer
+    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
 )
 from qgis.analysis import QgsNativeAlgorithms
 from processing.core.Processing import Processing

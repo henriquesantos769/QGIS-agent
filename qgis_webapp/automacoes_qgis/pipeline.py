@@ -1,7 +1,7 @@
 from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-    QgsCoordinateTransformContext, QgsRasterLayer
+    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
 )
 from qgis.PyQt.QtCore import QVariant
 from qgis.analysis import QgsNativeAlgorithms
@@ -18,6 +18,7 @@ import json
 import numpy as np
 import subprocess
 import os
+import math
 
 Processing.initialize()
 QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
@@ -162,27 +163,87 @@ def join_lotes_quadras(lotes_fix, quadras, out_path):
     return QgsVectorLayer(res_join["OUTPUT"], "lotes_com_quadra", "ogr")
 
 
-def numerar_lotes(lotes_join, out_path):
+def numerar_lotes(lotes_join: QgsVectorLayer, out_path: Path):
+    """
+    Numera os lotes dentro de cada quadra usando ângulo polar a partir
+    do centróide da quadra. Estável, replicável e ideal para memoriais.
+
+    Mantém o mesmo campo `lote_num` do pipeline atual.
+    """
+    def is_polygon_valid(geom):
+        if geom is None:
+            return False
+        if geom.type() != QgsWkbTypes.PolygonGeometry:
+            return False
+        if not geom.isGeosValid():   # evita polígonos degenerados
+            return False
+        if geom.area() < 1e-2:       # evita pedaços minúsculos / lixo
+            return False
+        return True
+
     pr = lotes_join.dataProvider()
+
+    # Garante o campo lote_num
     if "lote_num" not in [f.name() for f in lotes_join.fields()]:
         pr.addAttributes([QgsField("lote_num", QVariant.Int)])
         lotes_join.updateFields()
 
     idx_lote = lotes_join.fields().indexOf("lote_num")
-    lotes_join.startEditing()
 
+    # Agrupa features por quadra
     grouped = defaultdict(list)
     for feat in lotes_join.getFeatures():
-        grouped[feat["quadra"]].append(feat)
+        if not is_polygon_valid(feat.geometry()):
+            continue
+        grouped[str(feat["quadra"])].append(feat)
 
-    for quadra, feats in grouped.items():
-        feats.sort(key=lambda f: f.geometry().centroid().asPoint().y(), reverse=True)
-        for i, f in enumerate(feats, start=1):
-            lotes_join.changeAttributeValue(f.id(), idx_lote, i)
+    lotes_join.startEditing()
+
+    for quadra_val, feats in grouped.items():
+
+        # ---------------------------
+        # 1. Calcula o centróide da quadra
+        # ---------------------------
+        # quadra_val é valor do campo, não geom. da quadra;
+        # então pegamos os lotes e unimos para formar quadra
+        geoms = [f.geometry() for f in feats]
+        quadra_union = geoms[0]
+        for g in geoms[1:]:
+            quadra_union = quadra_union.combine(g)
+
+        centro = quadra_union.centroid().asPoint()
+
+        # ---------------------------
+        # 2. Calcula ângulo polar de cada lote
+        # ---------------------------
+        lotes_com_ang = []
+        for f in feats:
+            c = f.geometry().centroid().asPoint()
+            dx = c.x() - centro.x()
+            dy = c.y() - centro.y()
+
+            # Ângulo polar, ajustado para sentido HORÁRIO (como Métrica)
+            ang = math.degrees(math.atan2(dy, dx))
+            ang = (450 - ang) % 360  # gira e ajusta para 0° no norte, sentido horário
+
+            lotes_com_ang.append((ang, f))
+
+        # ---------------------------
+        # 3. Ordena os lotes pelo ângulo
+        # ---------------------------
+        lotes_com_ang.sort(key=lambda x: x[0])
+
+        # ---------------------------
+        # 4. Atribui numeração crescente
+        # ---------------------------
+        for i, (_, feat) in enumerate(lotes_com_ang, start=1):
+            lotes_join.changeAttributeValue(feat.id(), idx_lote, i)
 
     lotes_join.commitChanges()
+
+    # Mantém a compatibilidade com tua função original
     save_layer(lotes_join, out_path)
-    print("Numeração dos lotes concluída:", out_path)
+    print("📌 Numeração dos lotes concluída (ângulo polar):", out_path)
     return lotes_join
 
 def extrair_ruas_overpass(quadras, out_dir):
