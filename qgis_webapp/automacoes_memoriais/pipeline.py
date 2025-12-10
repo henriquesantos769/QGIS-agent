@@ -9,7 +9,7 @@ from docx.shared import Pt
 from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-    QgsCoordinateTransformContext, QgsRasterLayer
+    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
 )
 from qgis.analysis import QgsNativeAlgorithms
 from processing.core.Processing import Processing
@@ -1117,6 +1117,109 @@ def calcular_medidas_e_azimutes(upload_dir,
     print("Arquivo:", out)
     return out
 
+def classificar_lados_por_frente(coords, idx_frente):
+    import math
+    from shapely.geometry import Point, Polygon
+
+    n = len(coords)
+
+    # -----------------------------------
+    # 1) centróide interno (robusto)
+    # -----------------------------------
+    C = Polygon(coords).representative_point()
+
+    # -----------------------------------
+    # 2) vetor da frente (normalizado)
+    # -----------------------------------
+    f1 = Point(coords[idx_frente])
+    f2 = Point(coords[(idx_frente + 1) % n])
+
+    fx = f2.x - f1.x
+    fy = f2.y - f1.y
+
+    L = math.hypot(fx, fy)
+    fx /= L
+    fy /= L
+
+    # -----------------------------------
+    # 3) normal interna (para detectar fundos)
+    # -----------------------------------
+    n1 = (-fy, fx)
+    n2 = ( fy, -fx)
+
+    mx = (f1.x + f2.x) / 2
+    my = (f1.y + f2.y) / 2
+    vc = (C.x - mx, C.y - my)
+
+    if vc[0] * n1[0] + vc[1] * n1[1] > 0:
+        nx, ny = n1     # normal correta para "fundo"
+    else:
+        nx, ny = n2
+
+    # -----------------------------------
+    # 4) listas de classificação
+    # -----------------------------------
+    frente_list   = [idx_frente]
+    fundos_list   = []
+    direita_list  = []
+    esquerda_list = []
+
+    # -----------------------------------
+    # 5) classificar todos os segmentos
+    # -----------------------------------
+    for i in range(n):
+
+        if i == idx_frente:
+            continue
+
+        # ponto médio do segmento i
+        p1 = Point(coords[i])
+        p2 = Point(coords[(i + 1) % n])
+
+        mx = (p1.x + p2.x) / 2 - C.x
+        my = (p1.y + p2.y) / 2 - C.y
+
+        # projeção na normal (para detectar fundos)
+        proj_y = mx * nx + my * ny
+
+        # -----------------------------------
+        # 5a) FUNDOS (primeiro critério)
+        # -----------------------------------
+        if proj_y > 0:
+            fundos_list.append(i)
+            continue
+
+        # vetor do segmento (para produto vetorial)
+        sx = p2.x - p1.x
+        sy = p2.y - p1.y
+
+        # -----------------------------------
+        # 5b) DIREITA / ESQUERDA (critério 100% estável)
+        # -----------------------------------
+        cross = fx * sy - fy * sx
+
+        if cross < 0:
+            direita_list.append(i)
+        elif cross > 0:
+            esquerda_list.append(i)
+        else:
+            # segmento perfeitamente perpendicular → decidir pela projeção
+            if mx * fx + my * fy > 0:
+                esquerda_list.append(i)
+            else:
+                direita_list.append(i)
+
+    # -----------------------------------
+    # 6) retorno final no formato desejado
+    # -----------------------------------
+    return {
+        "frente":    frente_list,
+        "fundos":    fundos_list,
+        "direita":   direita_list,
+        "esquerda":  esquerda_list
+    }
+
+
 
 def _memorial_lote_completo(row, nucleo, municipio, uf):
     """
@@ -1124,6 +1227,9 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     calculando direção, deflexão e confrontações reais
     para lotes irregulares (qualquer número de lados).
     """
+
+    import math
+    from shapely.geometry import Point
 
     geom = row.geometry
     if geom is None or geom.is_empty:
@@ -1143,7 +1249,12 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     if n < 3:
         return "Lote com geometria insuficiente."
 
+    # Frente correta (índice do segmento)
     frente_conf = row.get("Conf_Frente")
+    try:
+        frente_conf = int(frente_conf)
+    except:
+        frente_conf = 0
 
     # ------------------------------------
     # Helper: formatação coordenadas
@@ -1152,47 +1263,43 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         return format(float(v), ",.4f").replace(",", "X").replace(".", ",").replace("X", ".")
 
     # ------------------------------------
-    # Azimute de um segmento i
+    # CLASSIFICAÇÃO DOS SEGMENTOS
     # ------------------------------------
-    def azimute(i):
-        x1, y1 = coords[i]
-        x2, y2 = coords[(i + 1) % n]
-        dx = x2 - x1
-        dy = y2 - y1
-        return (math.degrees(math.atan2(dy, dx)) + 360) % 360
-
-    az_frente = azimute(0)
+    lados = classificar_lados_por_frente(coords, frente_conf)
+    print("QUADRA,", quadra, 'Lote', lote)
+    print(lados)
 
     # ------------------------------------
     # Tipo de lado dinâmico
     # ------------------------------------
-    def nome_lado(idx):
-        az_lado = azimute(idx)
-        diff = (az_lado - az_frente + 360) % 360
-
-        if abs(diff) < 30:
+    def nome_lado(i):
+        if i in lados["frente"]:
             return "de frente"
-        elif 60 < diff < 120:
-            return "do lado direito"
-        elif 150 < diff < 210:
+        if i in lados["fundos"]:
             return "ao fundo"
-        elif 240 < diff < 300:
+        if i in lados["direita"]:
+            return "do lado direito"
+        if i in lados["esquerda"]:
             return "do lado esquerdo"
-        else:
-            return "pelo perímetro"
+        return "pelo perímetro"
 
     # ------------------------------------
-    # Confronto por lado (da função anterior)
+    # Confronto por lado
     # ------------------------------------
     def lado_confronto(idx):
-        if idx == 0:
-            return row.get("Conf_Frente")  or "Área não identificada"
-        if idx == 1:
+
+        if idx in lados["frente"]:
+            return row.get("Conf_Frente") or "Área não identificada"
+
+        if idx in lados["direita"]:
             return row.get("Conf_Direita") or "Área não identificada"
-        if idx == 2:
-            return row.get("Conf_Fundos")  or "Área não identificada"
-        if idx == 3:
+
+        if idx in lados["fundos"]:
+            return row.get("Conf_Fundos") or "Área não identificada"
+
+        if idx in lados["esquerda"]:
             return row.get("Conf_Esquerda") or "Área não identificada"
+
         return "Área não identificada"
 
     # ------------------------------------
@@ -1251,12 +1358,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
 
         dist_fmt = format(dist, ",.2f").replace(",", "X").replace(".", ",").replace("X", ".")
 
-        # -------------------------------------------------
-        # Montagem da frase
-        # -------------------------------------------------
         if i == 0:
-            # 🔹 PRIMEIRO SEGMENTO
-            # Sem espaço no começo, termina com vírgula
             texto = (
                 f"Para quem de dentro do lote {lote} olha para {confronto} "
                 f"inicia-se a descrição na coordenada {coord1}, "
@@ -1264,15 +1366,11 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
                 f"até a coordenada {coord2}, confrontando com {confronto}, "
             )
         elif i < n - 1:
-            # 🔹 SEGMENTOS INTERMEDIÁRIOS
-            # Começa com "deste ponto ...", termina com vírgula
             texto = (
                 f"{frase_deflexao} com uma distância de {dist_fmt} m {tipo_lado} "
                 f"até a coordenada {coord2}, confrontando com {confronto},"
             )
         else:
-            # 🔹 ÚLTIMO SEGMENTO
-            # Termina com ponto e vírgula
             texto = (
                 f"{frase_deflexao} com uma distância de {dist_fmt} m {tipo_lado} "
                 f"até a coordenada {coord2}, confrontando com {confronto};"
@@ -1281,6 +1379,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         partes.append(texto)
 
     return " ".join(partes)
+
 
 def gerar_memorial_quadra(upload_dir: Path,
                           arquivo_final_nome: str,
