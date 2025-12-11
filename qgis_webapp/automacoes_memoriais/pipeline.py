@@ -1124,12 +1124,12 @@ def classificar_lados_por_frente(coords, idx_frente):
     n = len(coords)
 
     # -----------------------------------
-    # 1) centróide interno (robusto)
+    # 1) Centròide interno (robusto)
     # -----------------------------------
     C = Polygon(coords).representative_point()
 
     # -----------------------------------
-    # 2) vetor da frente (normalizado)
+    # 2) Vetor da frente (normalizado)
     # -----------------------------------
     f1 = Point(coords[idx_frente])
     f2 = Point(coords[(idx_frente + 1) % n])
@@ -1142,60 +1142,71 @@ def classificar_lados_por_frente(coords, idx_frente):
     fy /= L
 
     # -----------------------------------
-    # 3) normal interna (para detectar fundos)
+    # 3) Normal interna (para profundidade / fundos)
     # -----------------------------------
     n1 = (-fy, fx)
     n2 = ( fy, -fx)
 
-    mx = (f1.x + f2.x) / 2
-    my = (f1.y + f2.y) / 2
-    vc = (C.x - mx, C.y - my)
+    mx_f = (f1.x + f2.x) / 2
+    my_f = (f1.y + f2.y) / 2
+    vc = (C.x - mx_f, C.y - my_f)
 
     if vc[0] * n1[0] + vc[1] * n1[1] > 0:
-        nx, ny = n1     # normal correta para "fundo"
+        nx, ny = n1
     else:
         nx, ny = n2
 
     # -----------------------------------
-    # 4) listas de classificação
+    # 4) Primeiro passo: calcular proj_y de todos
     # -----------------------------------
-    frente_list   = [idx_frente]
-    fundos_list   = []
-    direita_list  = []
-    esquerda_list = []
+    proj_y_list = []
 
-    # -----------------------------------
-    # 5) classificar todos os segmentos
-    # -----------------------------------
     for i in range(n):
 
         if i == idx_frente:
             continue
 
-        # ponto médio do segmento i
         p1 = Point(coords[i])
         p2 = Point(coords[(i + 1) % n])
 
         mx = (p1.x + p2.x) / 2 - C.x
         my = (p1.y + p2.y) / 2 - C.y
 
-        # projeção na normal (para detectar fundos)
         proj_y = mx * nx + my * ny
+        proj_y_list.append((i, proj_y))
 
-        # -----------------------------------
-        # 5a) FUNDOS (primeiro critério)
-        # -----------------------------------
-        if proj_y > 0:
+    # -----------------------------------
+    # 5) Determinar o LIMIAR real dos fundos
+    # -----------------------------------
+    if proj_y_list:
+        max_proj_y = max(py for _, py in proj_y_list)
+    else:
+        max_proj_y = 0
+
+    # 60% do máximo → resolução perfeita para lotes diagonais
+    limiar = max_proj_y * 0.7
+
+    # -----------------------------------
+    # 6) Classificação final
+    # -----------------------------------
+    frente_list   = [idx_frente]
+    fundos_list   = []
+    direita_list  = []
+    esquerda_list = []
+
+    for i, proj_y in proj_y_list:
+
+        # --- FUNDOS --- (correto e estável)
+        if proj_y >= limiar:
             fundos_list.append(i)
             continue
 
-        # vetor do segmento (para produto vetorial)
+        # --- Direita / esquerda por cross-product --- (100% estável)
+        p1 = Point(coords[i])
+        p2 = Point(coords[(i + 1) % n])
         sx = p2.x - p1.x
         sy = p2.y - p1.y
 
-        # -----------------------------------
-        # 5b) DIREITA / ESQUERDA (critério 100% estável)
-        # -----------------------------------
         cross = fx * sy - fy * sx
 
         if cross < 0:
@@ -1203,14 +1214,18 @@ def classificar_lados_por_frente(coords, idx_frente):
         elif cross > 0:
             esquerda_list.append(i)
         else:
-            # segmento perfeitamente perpendicular → decidir pela projeção
-            if mx * fx + my * fy > 0:
+            # perpendicular → decide pela projeção na frente
+            mx = (p1.x + p2.x) / 2 - C.x
+            my = (p1.y + p2.y) / 2 - C.y
+            proj_x = mx * fx + my * fy
+
+            if proj_x >= 0:
                 esquerda_list.append(i)
             else:
                 direita_list.append(i)
 
     # -----------------------------------
-    # 6) retorno final no formato desejado
+    # 7) retorno final no formato desejado
     # -----------------------------------
     return {
         "frente":    frente_list,
@@ -1218,8 +1233,6 @@ def classificar_lados_por_frente(coords, idx_frente):
         "direita":   direita_list,
         "esquerda":  esquerda_list
     }
-
-
 
 def _memorial_lote_completo(row, nucleo, municipio, uf):
     """
