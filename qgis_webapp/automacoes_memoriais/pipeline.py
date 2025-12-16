@@ -686,7 +686,7 @@ def atribuir_ruas_frente(upload_dir,
     # ====================
     # 3) Pequeno buffer de contato
     # ====================
-    gdf_ruas["geometry"] = gdf_ruas.buffer(buffer_rua)
+    gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(buffer_rua)
 
     # Índice espacial
     sindex_ruas = gdf_ruas.sindex
@@ -728,7 +728,7 @@ def atribuir_ruas_frente(upload_dir,
             if not isinstance(nome, str):
                 continue
 
-            t = testada(lote_geom, r.geometry)
+            t = testada(lote_geom, r.geom_buff)
             if t >= min_testada:
                 ruas_tocantes.append(nome)
                 testadas.append((nome, t))
@@ -780,14 +780,22 @@ def atribuir_ruas_frente(upload_dir,
 def gerar_confrontacoes(
     upload_dir,
     arquivo_final_nome="final_gpkg.gpkg",
-    buffer_rua=9,
+    buffer_rua=4,
     epsg_lotes=31983
 ):
     import math
     import geopandas as gpd
-    from shapely.geometry import LineString
+    from shapely.geometry import LineString, Point, Polygon
+    from collections import defaultdict
 
     print("📐 Gerando confrontações…")
+
+    # ---------------------------------------------------------
+    # Parâmetros de robustez
+    # ---------------------------------------------------------
+    TOL = 0.05            # tolerância topológica (m)
+    MIN_LEN_LOTE = 0.7    # comprimento mínimo para considerar confrontação lote-lote
+    MIN_FRAC_SEG = 0.15   # fração mínima do segmento
 
     # ---------------------------------------------------------
     # Carregar dados
@@ -804,30 +812,104 @@ def gerar_confrontacoes(
     gdf_ruas = gdf_ruas.to_crs(gdf_lotes.crs)
     gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(buffer_rua)
 
-    sidx_ruas  = gdf_ruas.sindex
     sidx_lotes = gdf_lotes.sindex
+    sidx_ruas  = gdf_ruas.sindex
 
     # ---------------------------------------------------------
-    # Helpers
+    # Helpers geométricos
     # ---------------------------------------------------------
-    def segmentos_do_lote(poly):
-        coords = list(poly.exterior.coords)
+    def segmentos_do_lote(coords):
         return [
-            ((coords[i][0], coords[i][1]), (coords[i+1][0], coords[i+1][1]))
-            for i in range(len(coords)-1)
+            (coords[i], coords[i + 1])
+            for i in range(len(coords) - 1)
         ]
 
-    def segmento_linha(seg):
-        (x1,y1),(x2,y2) = seg
-        return LineString([(x1,y1),(x2,y2)])
+    def linha(seg):
+        return LineString(seg)
 
-    # garantir campos
-    for campo in ["Conf_Frente","Conf_Fundos","Conf_Direita","Conf_Esquerda"]:
+    # ---------------------------------------------------------
+    # Classificação de lados (sua lógica – intacta)
+    # ---------------------------------------------------------
+    def classificar_lados_por_frente(coords, idx_frente):
+        C = Polygon(coords).representative_point()
+
+        f1 = Point(coords[idx_frente])
+        f2 = Point(coords[idx_frente + 1])
+
+        fx, fy = f2.x - f1.x, f2.y - f1.y
+        L = math.hypot(fx, fy)
+        fx, fy = fx / L, fy / L
+
+        n1 = (-fy, fx)
+        n2 = ( fy, -fx)
+
+        mx_f = (f1.x + f2.x) / 2
+        my_f = (f1.y + f2.y) / 2
+        vc = (C.x - mx_f, C.y - my_f)
+
+        nx, ny = n1 if vc[0]*n1[0] + vc[1]*n1[1] > 0 else n2
+
+        proj_y_list = []
+        for i in range(len(coords) - 1):
+            if i == idx_frente:
+                continue
+
+            p1 = Point(coords[i])
+            p2 = Point(coords[i + 1])
+            mx = (p1.x + p2.x) / 2 - C.x
+            my = (p1.y + p2.y) / 2 - C.y
+            proj_y = mx * nx + my * ny
+            proj_y_list.append((i, proj_y))
+
+        max_proj_y = max((py for _, py in proj_y_list), default=0)
+        limiar = max_proj_y * 0.7
+
+        lados = {"frente": [idx_frente], "fundos": [], "direita": [], "esquerda": []}
+
+        for i, proj_y in proj_y_list:
+            if proj_y >= limiar:
+                lados["fundos"].append(i)
+                continue
+
+            p1 = Point(coords[i])
+            p2 = Point(coords[i + 1])
+            sx, sy = p2.x - p1.x, p2.y - p1.y
+            cross = fx * sy - fy * sx
+
+            if cross < 0:
+                lados["direita"].append(i)
+            elif cross > 0:
+                lados["esquerda"].append(i)
+            else:
+                lados["direita"].append(i)
+
+        return lados
+
+    # ---------------------------------------------------------
+    # Agregação cadastral
+    # ---------------------------------------------------------
+    def confrontante_do_lado(indices, seg_infos):
+        soma = defaultdict(float)
+
+        for i in indices:
+            nome = seg_infos[i]["nome"]
+            L = seg_infos[i]["comprimento"]
+            soma[nome] += L
+
+        if not soma:
+            return "Área não identificada"
+
+        return max(soma.items(), key=lambda x: x[1])[0]
+
+    # ---------------------------------------------------------
+    # Garantir campos
+    # ---------------------------------------------------------
+    for campo in ["Conf_Frente", "Conf_Fundos", "Conf_Direita", "Conf_Esquerda"]:
         if campo not in gdf_lotes.columns:
             gdf_lotes[campo] = None
 
     # ---------------------------------------------------------
-    # PROCESSAR LOTE A LOTE
+    # PROCESSAMENTO PRINCIPAL
     # ---------------------------------------------------------
     for idx, row in gdf_lotes.iterrows():
 
@@ -835,128 +917,82 @@ def gerar_confrontacoes(
         if geom is None or geom.is_empty:
             continue
 
-        segs = segmentos_do_lote(geom)
         lado_frente = row.get("LadoFrente")
-
         if not isinstance(lado_frente, str):
             continue
 
+        coords = list(geom.exterior.coords)
+        segs = segmentos_do_lote(coords)
+
         seg_infos = []
 
-        # -----------------------------------------------------
-        # Para cada segmento detectar confrontante
-        # -----------------------------------------------------
-        for seg in segs:
+        # ----------------------------
+        # Detectar confrontante por segmento
+        # ----------------------------
+        for i, seg in enumerate(segs):
+            ln = linha(seg)
+            seg_len = ln.length
+            ln_buff = ln.buffer(TOL)
 
-            linha = segmento_linha(seg)
-            dx = seg[1][0] - seg[0][0]
-            dy = seg[1][1] - seg[0][1]
-            az = (math.degrees(math.atan2(dy, dx)) + 360) % 360
-            seg_len = linha.length
+            melhor_nome = "Área não identificada"
+            melhor_score = 0
 
-            # --------------------------------------
-            # 1) LOTE VIZINHO (maior interseção)
-            # --------------------------------------
-            melhor_lote = None
-            melhor_lote_len = 0
-
-            for il in sidx_lotes.intersection(linha.bounds):
+            # ---- LOTE VIZINHO (borda)
+            for il in sidx_lotes.intersection(ln.bounds):
                 if il == idx:
                     continue
-
                 other = gdf_lotes.iloc[il]
-                inter = other.geometry.intersection(linha)
+                inter = other.geometry.boundary.intersection(ln_buff)
 
                 if not inter.is_empty:
-                    inter_len = inter.length
-                    if inter_len > melhor_lote_len:
-                        melhor_lote_len = inter_len
-                        melhor_lote = other
+                    L = inter.length
+                    # if L >= MIN_LEN_LOTE and L / seg_len >= MIN_FRAC_SEG:
+                    if L / seg_len >= MIN_FRAC_SEG:
+                        if L > melhor_score:
+                            melhor_score = L
+                            melhor_nome = f"Lote {other.get('lote_num')}"
 
-            # --------------------------------------
-            # 2) RUA (se não tem lote)
-            # --------------------------------------
-            melhor_rua = None
-            melhor_rua_len = 0
-
-            if melhor_lote is None:
-                for ir in sidx_ruas.intersection(linha.bounds):
+            # ---- RUA
+            if melhor_score == 0:
+                for ir in sidx_ruas.intersection(ln.bounds):
                     rua = gdf_ruas.iloc[ir]
-                    inter = rua["geom_buff"].intersection(linha)
-
-                    if not inter.is_empty:
-                        inter_len = inter.length
-                        if inter_len > melhor_rua_len and rua.get("name"):
-                            melhor_rua = rua
-                            melhor_rua_len = inter_len
-
-            # --------------------------------------
-            # 3) Tipo final
-            # --------------------------------------
-            if melhor_lote is not None:
-                tipo = "lote"
-                conf = f"Lote {melhor_lote.get('lote_num')}"
-                rua_nome = None
-
-            elif melhor_rua is not None:
-                tipo = "rua"
-                conf = melhor_rua.get("name")
-                rua_nome = conf
-
-            else:
-                tipo = "limite"
-                conf = "Limite"
-                rua_nome = None
+                    inter = rua["geom_buff"].intersection(ln_buff)
+                    if not inter.is_empty and rua.get("name"):
+                        L = inter.length
+                        if L / seg_len >= MIN_FRAC_SEG and L > melhor_score:
+                            melhor_score = L
+                            melhor_nome = rua.get("name")
 
             seg_infos.append({
-                "seg": seg,
+                "idx": i,
                 "comprimento": seg_len,
-                "azimute": az,
-                "tipo": tipo,
-                "nome": conf,
-                "rua": rua_nome
+                "nome": melhor_nome
             })
 
-        # -----------------------------------------------------
-        # IDENTIFICAR SEGMENTO DA FRENTE
-        # -----------------------------------------------------
-        segs_frente = [s for s in seg_infos if s["rua"] == lado_frente]
+        # ----------------------------
+        # Identificar índice da frente
+        # ----------------------------
+        idx_frente = None
+        for s in seg_infos:
+            if s["nome"] == lado_frente:
+                if idx_frente is None or s["comprimento"] > seg_infos[idx_frente]["comprimento"]:
+                    idx_frente = s["idx"]
 
-        if segs_frente:
-            frente = max(segs_frente, key=lambda s: s["comprimento"])
-        else:
+        if idx_frente is None:
             continue
 
-        az_frente = frente["azimute"]
+        # ----------------------------
+        # Classificar lados corretamente
+        # ----------------------------
+        lados = classificar_lados_por_frente(coords, idx_frente)
 
-        # função auxiliar
-        def ang_diff(a,b):
-            d = abs(a-b)
-            return min(d, 360-d)
-
-        # -------------------------------------------
-        # Função "melhor_seg" (prioriza lotes)
-        # -------------------------------------------
-        def melhor_seg(target_angle):
-            cand = [s for s in seg_infos if s["tipo"] == "lote"]
-            if not cand:
-                cand = seg_infos
-            return min(cand, key=lambda s: ang_diff(s["azimute"], target_angle))
-
-        fundos   = melhor_seg((az_frente + 180) % 360)
-        direita  = melhor_seg((az_frente - 90) % 360)
-        esquerda = melhor_seg((az_frente + 90) % 360)
-
-        # -----------------------------------------------------
-        # Salvar confrontantes
-        # -----------------------------------------------------
-        gdf_lotes.at[idx, "Conf_Frente"]   = frente["nome"]
-        gdf_lotes.at[idx, "Conf_Fundos"]   = fundos["nome"]
-        gdf_lotes.at[idx, "Conf_Direita"]  = direita["nome"]
-        gdf_lotes.at[idx, "Conf_Esquerda"] = esquerda["nome"]
+        gdf_lotes.at[idx, "Conf_Frente"]   = confrontante_do_lado(lados["frente"],   seg_infos)
+        gdf_lotes.at[idx, "Conf_Direita"]  = confrontante_do_lado(lados["direita"],  seg_infos)
+        gdf_lotes.at[idx, "Conf_Esquerda"] = confrontante_do_lado(lados["esquerda"], seg_infos)
+        gdf_lotes.at[idx, "Conf_Fundos"]   = confrontante_do_lado(lados["fundos"],   seg_infos)
 
     # ---------------------------------------------------------
-    # Salvar resultado final
+    # Salvar resultado
     # ---------------------------------------------------------
     out = upload_dir / "final" / "final_confrontacoes.gpkg"
     gdf_lotes.to_file(out, driver="GPKG", encoding="utf-8")
@@ -964,6 +1000,7 @@ def gerar_confrontacoes(
     print("✅ Confrontações geradas com sucesso!")
     print("Arquivo:", out)
     return out
+
 
 
 def calcular_medidas_e_azimutes(upload_dir,
@@ -1117,6 +1154,122 @@ def calcular_medidas_e_azimutes(upload_dir,
     print("Arquivo:", out)
     return out
 
+def classificar_lados_por_frente(coords, idx_frente):
+    import math
+    from shapely.geometry import Point, Polygon
+
+    n = len(coords)
+
+    # -----------------------------------
+    # 1) Centròide interno (robusto)
+    # -----------------------------------
+    C = Polygon(coords).representative_point()
+
+    # -----------------------------------
+    # 2) Vetor da frente (normalizado)
+    # -----------------------------------
+    f1 = Point(coords[idx_frente])
+    f2 = Point(coords[(idx_frente + 1) % n])
+
+    fx = f2.x - f1.x
+    fy = f2.y - f1.y
+
+    L = math.hypot(fx, fy)
+    fx /= L
+    fy /= L
+
+    # -----------------------------------
+    # 3) Normal interna (para profundidade / fundos)
+    # -----------------------------------
+    n1 = (-fy, fx)
+    n2 = ( fy, -fx)
+
+    mx_f = (f1.x + f2.x) / 2
+    my_f = (f1.y + f2.y) / 2
+    vc = (C.x - mx_f, C.y - my_f)
+
+    if vc[0] * n1[0] + vc[1] * n1[1] > 0:
+        nx, ny = n1
+    else:
+        nx, ny = n2
+
+    # -----------------------------------
+    # 4) Primeiro passo: calcular proj_y de todos
+    # -----------------------------------
+    proj_y_list = []
+
+    for i in range(n):
+
+        if i == idx_frente:
+            continue
+
+        p1 = Point(coords[i])
+        p2 = Point(coords[(i + 1) % n])
+
+        mx = (p1.x + p2.x) / 2 - C.x
+        my = (p1.y + p2.y) / 2 - C.y
+
+        proj_y = mx * nx + my * ny
+        proj_y_list.append((i, proj_y))
+
+    # -----------------------------------
+    # 5) Determinar o LIMIAR real dos fundos
+    # -----------------------------------
+    if proj_y_list:
+        max_proj_y = max(py for _, py in proj_y_list)
+    else:
+        max_proj_y = 0
+
+    # 60% do máximo → resolução perfeita para lotes diagonais
+    limiar = max_proj_y * 0.7
+
+    # -----------------------------------
+    # 6) Classificação final
+    # -----------------------------------
+    frente_list   = [idx_frente]
+    fundos_list   = []
+    direita_list  = []
+    esquerda_list = []
+
+    for i, proj_y in proj_y_list:
+
+        # --- FUNDOS --- (correto e estável)
+        if proj_y >= limiar:
+            fundos_list.append(i)
+            continue
+
+        # --- Direita / esquerda por cross-product --- (100% estável)
+        p1 = Point(coords[i])
+        p2 = Point(coords[(i + 1) % n])
+        sx = p2.x - p1.x
+        sy = p2.y - p1.y
+
+        cross = fx * sy - fy * sx
+
+        if cross < 0:
+            direita_list.append(i)
+        elif cross > 0:
+            esquerda_list.append(i)
+        else:
+            # perpendicular → decide pela projeção na frente
+            mx = (p1.x + p2.x) / 2 - C.x
+            my = (p1.y + p2.y) / 2 - C.y
+            proj_x = mx * fx + my * fy
+
+            if proj_x >= 0:
+                esquerda_list.append(i)
+            else:
+                direita_list.append(i)
+
+    # -----------------------------------
+    # 7) retorno final no formato desejado
+    # -----------------------------------
+    return {
+        "frente":    frente_list,
+        "fundos":    fundos_list,
+        "direita":   direita_list,
+        "esquerda":  esquerda_list
+    }
 
 def _memorial_lote_completo(row, nucleo, municipio, uf):
     """
@@ -1124,6 +1277,9 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     calculando direção, deflexão e confrontações reais
     para lotes irregulares (qualquer número de lados).
     """
+
+    import math
+    from shapely.geometry import Point
 
     geom = row.geometry
     if geom is None or geom.is_empty:
@@ -1143,7 +1299,12 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     if n < 3:
         return "Lote com geometria insuficiente."
 
+    # Frente correta (índice do segmento)
     frente_conf = row.get("Conf_Frente")
+    try:
+        frente_conf = int(frente_conf)
+    except:
+        frente_conf = 0
 
     # ------------------------------------
     # Helper: formatação coordenadas
@@ -1152,47 +1313,43 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         return format(float(v), ",.4f").replace(",", "X").replace(".", ",").replace("X", ".")
 
     # ------------------------------------
-    # Azimute de um segmento i
+    # CLASSIFICAÇÃO DOS SEGMENTOS
     # ------------------------------------
-    def azimute(i):
-        x1, y1 = coords[i]
-        x2, y2 = coords[(i + 1) % n]
-        dx = x2 - x1
-        dy = y2 - y1
-        return (math.degrees(math.atan2(dy, dx)) + 360) % 360
-
-    az_frente = azimute(0)
+    lados = classificar_lados_por_frente(coords, frente_conf)
+    print("QUADRA,", quadra, 'Lote', lote)
+    print(lados)
 
     # ------------------------------------
     # Tipo de lado dinâmico
     # ------------------------------------
-    def nome_lado(idx):
-        az_lado = azimute(idx)
-        diff = (az_lado - az_frente + 360) % 360
-
-        if abs(diff) < 30:
+    def nome_lado(i):
+        if i in lados["frente"]:
             return "de frente"
-        elif 60 < diff < 120:
-            return "do lado direito"
-        elif 150 < diff < 210:
+        if i in lados["fundos"]:
             return "ao fundo"
-        elif 240 < diff < 300:
+        if i in lados["direita"]:
+            return "do lado direito"
+        if i in lados["esquerda"]:
             return "do lado esquerdo"
-        else:
-            return "pelo perímetro"
+        return "pelo perímetro"
 
     # ------------------------------------
-    # Confronto por lado (da função anterior)
+    # Confronto por lado
     # ------------------------------------
     def lado_confronto(idx):
-        if idx == 0:
-            return row.get("Conf_Frente")  or "Área não identificada"
-        if idx == 1:
+
+        if idx in lados["frente"]:
+            return row.get("Conf_Frente") or "Área não identificada"
+
+        if idx in lados["direita"]:
             return row.get("Conf_Direita") or "Área não identificada"
-        if idx == 2:
-            return row.get("Conf_Fundos")  or "Área não identificada"
-        if idx == 3:
+
+        if idx in lados["fundos"]:
+            return row.get("Conf_Fundos") or "Área não identificada"
+
+        if idx in lados["esquerda"]:
             return row.get("Conf_Esquerda") or "Área não identificada"
+
         return "Área não identificada"
 
     # ------------------------------------
@@ -1251,12 +1408,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
 
         dist_fmt = format(dist, ",.2f").replace(",", "X").replace(".", ",").replace("X", ".")
 
-        # -------------------------------------------------
-        # Montagem da frase
-        # -------------------------------------------------
         if i == 0:
-            # 🔹 PRIMEIRO SEGMENTO
-            # Sem espaço no começo, termina com vírgula
             texto = (
                 f"Para quem de dentro do lote {lote} olha para {confronto} "
                 f"inicia-se a descrição na coordenada {coord1}, "
@@ -1264,15 +1416,11 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
                 f"até a coordenada {coord2}, confrontando com {confronto}, "
             )
         elif i < n - 1:
-            # 🔹 SEGMENTOS INTERMEDIÁRIOS
-            # Começa com "deste ponto ...", termina com vírgula
             texto = (
                 f"{frase_deflexao} com uma distância de {dist_fmt} m {tipo_lado} "
                 f"até a coordenada {coord2}, confrontando com {confronto},"
             )
         else:
-            # 🔹 ÚLTIMO SEGMENTO
-            # Termina com ponto e vírgula
             texto = (
                 f"{frase_deflexao} com uma distância de {dist_fmt} m {tipo_lado} "
                 f"até a coordenada {coord2}, confrontando com {confronto};"
@@ -1281,6 +1429,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         partes.append(texto)
 
     return " ".join(partes)
+
 
 def gerar_memorial_quadra(upload_dir: Path,
                           arquivo_final_nome: str,
