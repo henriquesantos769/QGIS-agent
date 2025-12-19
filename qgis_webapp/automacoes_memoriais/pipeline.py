@@ -10,6 +10,7 @@ from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
+    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
 )
 from qgis.analysis import QgsNativeAlgorithms
 from processing.core.Processing import Processing
@@ -1101,11 +1102,16 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         if i in lados["frente"]:
             return "de frente"
         if i in lados["fundos"]:
+        if i in lados["fundos"]:
             return "ao fundo"
         if i in lados["direita"]:
             return "do lado direito"
         if i in lados["esquerda"]:
+        if i in lados["direita"]:
+            return "do lado direito"
+        if i in lados["esquerda"]:
             return "do lado esquerdo"
+        return "pelo perímetro"
         return "pelo perímetro"
 
     def lado_confronto(i):
@@ -1117,6 +1123,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
             return row.get("Conf_Fundos") or "Área não identificada"
         if i in lados["esquerda"]:
             return row.get("Conf_Esquerda") or "Área não identificada"
+
         return "Área não identificada"
 
     # --------------------------------------------------
