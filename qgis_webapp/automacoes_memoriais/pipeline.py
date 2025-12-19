@@ -10,7 +10,6 @@ from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
-    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
 )
 from qgis.analysis import QgsNativeAlgorithms
 from processing.core.Processing import Processing
