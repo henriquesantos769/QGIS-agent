@@ -1,8 +1,12 @@
 // ---------------------------------------------------------
 // 🔧 Seletores
 // ---------------------------------------------------------
-const dropDXF = document.getElementById("dropzone-dxf");
-const fileInputDXF = document.getElementById("fileInputDXF");
+const dropProject = document.getElementById("dropzone-qgis");
+const fileInputProject = document.getElementById("fileInputProject");
+
+const layerLotes = document.getElementById("layerLotes");
+const layerQuadras = document.getElementById("layerQuadras");
+const layerRuas = document.getElementById("layerRuas");
 
 const startBtn = document.getElementById("startBtn");
 const progressArea = document.getElementById("progressArea");
@@ -10,16 +14,16 @@ const resetBtn = document.getElementById("resetBtn");
 const downloadBtn = document.getElementById("downloadMemoriais");
 const toast = document.getElementById("toast");
 
-let selectedDXF = null;
+let selectedProject = null;
 let monitoramentoAtivo = false;
 let toastTimeout = null;
 
 // ---------------------------------------------------------
-// Loader visual
+// 🔄 Loader visual
 // ---------------------------------------------------------
 const SPINNER = `
   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 50 50">
-    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" 
+    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor"
             stroke-width="4" stroke-linecap="round"
             stroke-dasharray="31.415, 31.415">
       <animateTransform attributeName="transform" type="rotate"
@@ -28,9 +32,14 @@ const SPINNER = `
     </circle>
   </svg>`;
 
+// ---------------------------------------------------------
+// 🔄 Utilitários UI
+// ---------------------------------------------------------
 function setLoading(btn, label) {
   if (!btn) return;
-  if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
+  if (!btn.dataset.originalHtml) {
+    btn.dataset.originalHtml = btn.innerHTML;
+  }
   btn.innerHTML = `${label} ${SPINNER}`;
   btn.disabled = true;
 }
@@ -48,70 +57,119 @@ function showToast(msg) {
   toast.textContent = msg;
   toast.classList.add("show");
   clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => toast.classList.remove("show"), 2200);
+  toastTimeout = setTimeout(() => {
+    toast.classList.remove("show");
+  }, 2200);
 }
 
 // ---------------------------------------------------------
-// Ativar UI após selecionar arquivo
+// 📂 Estado: projeto selecionado
 // ---------------------------------------------------------
 function checkReady() {
-  if (selectedDXF) {
+  if (selectedProject) {
     progressArea.style.display = "grid";
     startBtn.style.display = "inline-flex";
     startBtn.disabled = false;
   }
 }
 
-// ---------------------------------------------------------
-// Upload de arquivo DXF
-// ---------------------------------------------------------
-function handleChosenDXF(file) {
-  selectedDXF = file;
-  dropDXF.querySelector(".hint").textContent = `Selecionado: ${file.name}`;
-  dropDXF.classList.add("chosen");
-  showToast(`DXF carregado: ${file.name}`);
+function handleChosenProject(file) {
+  if (!file) return;
+
+  // valida ZIP
+  if (!file.name.toLowerCase().endsWith(".zip")) {
+    showToast("❌ Envie um projeto QGIS compactado (.zip)");
+    return;
+  }
+
+  selectedProject = file;
+
+  const hint = dropProject.querySelector(".hint");
+  const strong = dropProject.querySelector("strong");
+
+  if (strong) strong.textContent = file.name;
+  if (hint) hint.textContent = "Projeto QGIS selecionado";
+
+  dropProject.classList.add("chosen");
+  showToast(`Projeto carregado: ${file.name}`);
   checkReady();
 }
 
-fileInputDXF.addEventListener("change", e => {
-  const file = e.target.files?.[0];
-  if (file) handleChosenDXF(file);
+// ---------------------------------------------------------
+// 📂 Input file — handlers robustos
+// ---------------------------------------------------------
+
+// Força abertura do seletor ao clicar no card inteiro
+dropProject.addEventListener("click", () => {
+  fileInputProject.click();
+});
+
+// change (padrão)
+fileInputProject.addEventListener("change", e => {
+  const file = e.target.files && e.target.files[0];
+  if (file) handleChosenProject(file);
+
+  // permite selecionar o mesmo arquivo novamente
   e.target.value = "";
 });
 
-// Drag & drop
-dropDXF.addEventListener("dragover", e => { 
-  e.preventDefault(); 
-  dropDXF.style.transform = "scale(1.02)"; 
-});
-dropDXF.addEventListener("dragleave", () => { 
-  dropDXF.style.transform = "none"; 
-});
-dropDXF.addEventListener("drop", e => {
-  e.preventDefault();
-  const file = e.dataTransfer.files[0];
-  if (file) handleChosenDXF(file);
-  dropDXF.style.transform = "none";
+// input (fallback)
+fileInputProject.addEventListener("input", e => {
+  const file = e.target.files && e.target.files[0];
+  if (file) handleChosenProject(file);
 });
 
 // ---------------------------------------------------------
-// Enviar DXF ao backend
+// 🧲 Drag & Drop
+// ---------------------------------------------------------
+dropProject.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropProject.style.transform = "scale(1.02)";
+});
+
+dropProject.addEventListener("dragleave", () => {
+  dropProject.style.transform = "none";
+});
+
+dropProject.addEventListener("drop", e => {
+  e.preventDefault();
+  dropProject.style.transform = "none";
+
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) handleChosenProject(file);
+});
+
+// ---------------------------------------------------------
+// 🔐 CSRF
 // ---------------------------------------------------------
 function getCSRFToken() {
-  return document.querySelector('meta[name="csrf-token"]').getAttribute("content");
+  return document
+    .querySelector('meta[name="csrf-token"]')
+    .getAttribute("content");
 }
 
-async function enviarDXF() {
-  if (!selectedDXF) {
-    showToast("❌ Selecione um arquivo DXF!");
+// ---------------------------------------------------------
+// 🚀 Enviar projeto QGIS (ZIP) ao backend
+// ---------------------------------------------------------
+async function enviarProjetoQGIS() {
+  if (!selectedProject) {
+    showToast("❌ Selecione um projeto QGIS (.zip)");
+    return false;
+  }
+
+  if (!layerLotes.value.trim()) {
+    showToast("❌ Informe o nome da camada de lotes");
     return false;
   }
 
   const formData = new FormData();
-  formData.append("arquivo", selectedDXF);
+  formData.append("arquivo", selectedProject);
+  formData.append("layer_lotes", layerLotes.value.trim());
+  formData.append("layer_quadras", layerQuadras.value.trim());
+  formData.append("layer_ruas", layerRuas.value.trim());
 
   setLoading(startBtn, "Processando...");
-  showToast("⏳ Processando DXF...");
+  showToast("⏳ Processando projeto QGIS...");
 
   try {
     const response = await fetch("gerar_memoriais/", {
@@ -132,14 +190,14 @@ async function enviarDXF() {
     }
   } catch (err) {
     console.error(err);
-    showToast("❌ Erro inesperado.");
+    showToast("❌ Erro inesperado no envio");
     clearLoading(startBtn);
     return false;
   }
 }
 
 // ---------------------------------------------------------
-// Monitoramento do progresso
+// 📊 Monitoramento do progresso
 // ---------------------------------------------------------
 async function monitorarProgresso() {
   const bar = document.getElementById("barFill");
@@ -181,7 +239,7 @@ async function monitorarProgresso() {
         finalizarUI();
         showToast("✅ Memoriais gerados!");
       } else if (etapa === 99) {
-        showToast("❌ Erro ao gerar memoriais.");
+        showToast("❌ Erro ao gerar memoriais");
         monitoramentoAtivo = false;
         finalizarUI(true);
       }
@@ -195,7 +253,7 @@ async function monitorarProgresso() {
 }
 
 // ---------------------------------------------------------
-// Finalização da UI
+// 🧹 Finalização da UI
 // ---------------------------------------------------------
 function finalizarUI(erro = false) {
   clearLoading(startBtn);
@@ -209,40 +267,42 @@ function finalizarUI(erro = false) {
 }
 
 // ---------------------------------------------------------
-// Botão "Iniciar"
+// ▶️ Botão Iniciar
 // ---------------------------------------------------------
 startBtn.addEventListener("click", async () => {
   monitoramentoAtivo = false;
 
-  const bar = document.getElementById("barFill");
-  bar.style.width = "0%";
+  document.getElementById("barFill").style.width = "0%";
   document.getElementById("percentLabel").textContent = "0%";
 
   showToast("🚀 Iniciando processamento...");
 
-  const ok = await enviarDXF();
+  const ok = await enviarProjetoQGIS();
   if (ok) monitorarProgresso();
   else clearLoading(startBtn);
 });
 
 // ---------------------------------------------------------
-// Botão "Baixar memoriais"
+// ⬇️ Download dos memoriais
 // ---------------------------------------------------------
 downloadBtn.addEventListener("click", () => {
   window.location.href = "download/";
 });
 
 // ---------------------------------------------------------
-// Botão "Reiniciar"
+// 🔄 Reiniciar
 // ---------------------------------------------------------
 resetBtn.addEventListener("click", () => location.reload());
 
 // ---------------------------------------------------------
-// Reset backend ao carregar página
+// ♻️ Reset backend ao carregar página
 // ---------------------------------------------------------
 window.addEventListener("load", async () => {
   try {
-    await fetch("resetar_progresso/", { method: "POST", credentials: "include" });
+    await fetch("resetar_progresso/", {
+      method: "POST",
+      credentials: "include"
+    });
   } catch (e) {}
 
   resetBtn.style.display = "none";

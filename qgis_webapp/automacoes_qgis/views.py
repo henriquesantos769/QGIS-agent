@@ -82,7 +82,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "lotes_buffer": upload_dir / "lotes_poligonos" / "lotes_buffer.shp",
             "quadras_raw": upload_dir / "quadras" / "quadras_dissolve.shp",
             "quadras_single": upload_dir / "quadras" / "quadras.shp",
-            "quadras_single2": upload_dir / "quadras" / "quadras_m2s.shp",
+            "quadras_single2": upload_dir / "quadras" / "quadras_m2s.gpkg",
             "quadras_pts": upload_dir / "quadras" / "quadras_rotulo_pt.gpkg",
             "lotes_join": upload_dir / "lotes_poligonos" / "lotes_com_quadra.shp",
             "arquivo_final": upload_dir / "final" / "final.shp"

@@ -134,6 +134,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     # --- Carregar camadas vetoriais ---
     camadas = [
         ("final/final_gpkg.gpkg", "Lotes/Quadras - Polígonos"),
+        ("quadras/quadras_m2s.gpkg", "Quadras"),
         ("quadras/quadras_rotulo_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
     ]

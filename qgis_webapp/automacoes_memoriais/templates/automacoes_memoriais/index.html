@@ -13,54 +13,144 @@
 
   <div class="wrap">
     <div class="card">
-      <h1>Gerador de Memoriais</h1>
-      <p class="subtitle">Envie o arquivo DXF para gerar os memoriais descritivos automaticamente.</p>
 
-      <!-- Área de Upload -->
+      <h1>Gerador de Memoriais</h1>
+
+      <p class="subtitle">
+        Envie um <strong>projeto QGIS compactado (.zip)</strong> contendo o arquivo
+        <code>.qgs</code> ou <code>.qgz</code> e suas pastas de camadas
+        (<em>quadras, ruas, ortofoto, etc.</em>) para gerar os memoriais automaticamente.
+      </p>
+
+      <!-- =========================
+           UPLOAD DO PROJETO QGIS (ZIP)
+      ========================== -->
       <div class="upload-area">
-        <label class="uploader" id="dropzone-dxf">
-          <input id="fileInputDXF" type="file" accept=".dxf" />
+        <label class="uploader" id="dropzone-qgis">
+          <input
+            id="fileInputProject"
+            type="file"
+            accept=".zip"
+          />
           <div>
-            <strong>Arquivo DXF</strong>
-            <div class="hint">Solte aqui ou clique para selecionar</div>
+            <strong>Projeto QGIS (.zip)</strong>
+            <div class="hint">
+              Deve conter o .qgs/.qgz e as pastas das camadas
+            </div>
           </div>
         </label>
       </div>
 
-      <!-- Área de Progresso -->
+      <!-- =========================
+           CONFIGURAÇÃO DAS CAMADAS
+      ========================== -->
+      <div class="config-area">
+        <h3>Configuração das Camadas</h3>
+
+        <div class="field">
+          <label for="layerLotes">Camada de Lotes (obrigatória)</label>
+          <input
+            id="layerLotes"
+            type="text"
+            placeholder="Ex: lotes"
+            value="final_gpkg"
+          />
+        </div>
+
+        <div class="field">
+          <label for="layerQuadras">Camada de Quadras (opcional)</label>
+          <input
+            id="layerQuadras"
+            type="text"
+            placeholder="Ex: quadras"
+            value="quadras_m2s"
+          />
+          <div class="hint">
+            Se não informada, as quadras serão geradas automaticamente.
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="layerRuas">Camada de Ruas (opcional)</label>
+          <input
+            id="layerRuas"
+            type="text"
+            placeholder="Ex: ruas"
+            value="ruas_osm_detalhadas"
+          />
+          <div class="hint">
+            Se não informada, o sistema pode usar OpenStreetMap ou a frente dos lotes.
+          </div>
+        </div>
+      </div>
+
+      <!-- =========================
+           ÁREA DE PROGRESSO
+      ========================== -->
       <div class="progress-area" id="progressArea">
         <div class="progress-card">
 
           <div class="badge">
-            <span id="stageChip">Etapa 1 de 17</span>
+            <span id="stageChip">Etapa 1</span>
           </div>
 
           <div style="display:flex; align-items:center; justify-content:space-between; margin:6px 0 8px;">
-            <div id="stageTitle" style="font-size:18px; font-weight:700;">Preparando ambiente…</div>
+            <div
+              id="stageTitle"
+              style="font-size:18px; font-weight:700;"
+            >
+              Preparando ambiente…
+            </div>
             <div class="ticker" id="percentLabel">0%</div>
           </div>
 
-          <div class="bar"><div id="barFill"></div></div>
+          <div class="bar">
+            <div id="barFill"></div>
+          </div>
 
-          <div class="mini" id="detailLine">Aguardando início…</div>
+          <div class="mini" id="detailLine">
+            Aguardando início…
+          </div>
 
           <div class="steps" id="stepsList" style="margin-top:14px;"></div>
 
-          <!-- Botões -->
+          <!-- =========================
+               BOTÕES
+          ========================== -->
           <div class="footer">
-            <button class="btn primary start-btn" id="startBtn" type="button">▶️ Iniciar</button>
 
-            <button class="btn download" id="downloadMemoriais" style="display:none;" type="button">
+            <button
+              class="btn primary start-btn"
+              id="startBtn"
+              type="button"
+              disabled
+            >
+              ▶️ Gerar Memoriais
+            </button>
+
+            <button
+              class="btn download"
+              id="downloadMemoriais"
+              style="display:none;"
+              type="button"
+            >
               ⬇️ Baixar Memoriais
             </button>
 
-            <button class="btn ghost" id="resetBtn" style="display:none;" type="button">
+            <button
+              class="btn ghost"
+              id="resetBtn"
+              style="display:none;"
+              type="button"
+            >
               🔄 Reiniciar
             </button>
+
           </div>
 
         </div>
       </div>
+
     </div>
   </div>
 

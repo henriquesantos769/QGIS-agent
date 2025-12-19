@@ -246,6 +246,7 @@ def numerar_lotes(lotes_join: QgsVectorLayer, out_path: Path):
     print("📌 Numeração dos lotes concluída (ângulo polar):", out_path)
     return lotes_join
 
+
 def extrair_ruas_overpass(quadras, out_dir):
     print("🌐 Baixando ruas do OSM com base no polígono das quadras...")
 
