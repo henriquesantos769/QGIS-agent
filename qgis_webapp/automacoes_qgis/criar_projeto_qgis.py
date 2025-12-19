@@ -1,3 +1,4 @@
+import processing
 from qgis.core import (
     QgsApplication,
     QgsVectorLayer,
@@ -20,6 +21,10 @@ from qgis.core import (
     QgsAttributeTableConfig,
     QgsVectorFileWriter,
     QgsCoordinateTransformContext,
+    QgsPalLayerSettings,
+    QgsVectorLayerSimpleLabeling,
+    QgsLineSymbol,
+    QgsSingleSymbolRenderer,
 )
 from pathlib import Path
 from qgis.PyQt.QtGui import QColor, QFont
@@ -34,6 +39,9 @@ import tempfile
 from PyQt5.QtCore import Qt
 import os
 import shutil
+from processing.core.Processing import Processing
+import processing
+from qgis.analysis import QgsNativeAlgorithms
 
 # CRS padrão (SIRGAS 2000 / UTM 22S)
 project_crs = QgsCoordinateReferenceSystem("EPSG:31982")
@@ -115,6 +123,10 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
     qgs = QgsApplication([], False)
     qgs.initQgis()
+
+    Processing.initialize()
+    QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
+
 
     project = QgsProject.instance()
     project.removeAllMapLayers()
@@ -311,6 +323,59 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         group.addLayer(layer)
         print(f"✅ Camada adicionada: {rel_path} | ID: {layer.id()}")
     
+    # linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
+
+    # # 1) reprojeta de verdade (para CRS em metros)
+    # reproj = processing.run(
+    #     "native:reprojectlayer",
+    #     {
+    #         "INPUT": final_layer_obj,
+    #         "TARGET_CRS": QgsCoordinateReferenceSystem(DEFAULT_CRS),
+    #         "OUTPUT": "memory:"
+    #     }
+    # )["OUTPUT"]
+
+    # # 2) polígono -> linha (contorno completo)
+    # contorno = processing.run(
+    #     "native:polygonstolines",
+    #     {
+    #         "INPUT": reproj,
+    #         "OUTPUT": "memory:"
+    #     }
+    # )["OUTPUT"]
+
+    # # 3) quebra a linha em segmentos (cada aresta vira uma feição)
+    # segs = processing.run(
+    #     "native:explodelines",
+    #     {
+    #         "INPUT": contorno,
+    #         "OUTPUT": str(linhas_path)
+    #     }
+    # )["OUTPUT"]
+
+    # layer_linhas = QgsVectorLayer(str(linhas_path), "Lotes - Distâncias", "ogr")
+    # project.addMapLayer(layer_linhas, False)
+
+    # Rótulos = comprimento do segmento (2 casas)
+    settings = QgsPalLayerSettings()
+    settings.fieldName = "format_number(length($geometry), 2) || ' m'"
+    settings.isExpression = True
+    settings.placement = QgsPalLayerSettings.Line
+    layer_linhas.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    layer_linhas.setLabelsEnabled(True)
+    layer_linhas.triggerRepaint()
+
+    # Estilo simples
+    symbol = QgsLineSymbol.createSimple({
+        "color": "#000000",
+        "width": "0.6"
+    })
+    layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
+
+    # Grupo
+    group = root_tree.findGroup("Lotes/Quadras - Polígonos")
+    group.addLayer(layer_linhas)
+
     if ortho_path:
         rlayer = QgsRasterLayer(str(ortho_path.resolve()), "Ortofoto de Base")
         if rlayer.isValid():

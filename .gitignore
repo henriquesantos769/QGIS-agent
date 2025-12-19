@@ -4,3 +4,9 @@ venv/
 .env
 \qgis_webapp\processing\
 \qgis_webapp\media\
+qgis_webapp/automacoes_memoriais/__pycache__/
+qgis_webapp/automacoes_memoriais/migrations/__pycache__/
+qgis_webapp/automacoes_qgis/__pycache__/
+qgis_webapp/automacoes_qgis/migrations/__pycache__/
+qgis_webapp/media/
+qgis_webapp/qgis_webapp/__pycache__/

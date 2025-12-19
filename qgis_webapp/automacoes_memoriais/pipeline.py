@@ -1050,7 +1050,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     # --------------------------------------------------
     # Normalizar geometria
     # --------------------------------------------------
-    geom = orient(geom, sign=1.0)
+    geom = orient(geom, sign=-1.0)
     coords = list(geom.exterior.coords)
     if coords[0] == coords[-1]:
         coords = coords[:-1]
@@ -1201,8 +1201,6 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         partes.append(texto)
 
     return " ".join(partes)
-
-
 
 def gerar_memorial_quadra(upload_dir: Path,
                           arquivo_final_nome: str,
