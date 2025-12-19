@@ -1102,16 +1102,11 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         if i in lados["frente"]:
             return "de frente"
         if i in lados["fundos"]:
-        if i in lados["fundos"]:
             return "ao fundo"
         if i in lados["direita"]:
             return "do lado direito"
         if i in lados["esquerda"]:
-        if i in lados["direita"]:
-            return "do lado direito"
-        if i in lados["esquerda"]:
             return "do lado esquerdo"
-        return "pelo perímetro"
         return "pelo perímetro"
 
     def lado_confronto(i):
