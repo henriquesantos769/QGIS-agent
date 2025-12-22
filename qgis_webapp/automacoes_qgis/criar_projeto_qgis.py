@@ -357,24 +357,24 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     # project.addMapLayer(layer_linhas, False)
 
     # Rótulos = comprimento do segmento (2 casas)
-    settings = QgsPalLayerSettings()
-    settings.fieldName = "format_number(length($geometry), 2) || ' m'"
-    settings.isExpression = True
-    settings.placement = QgsPalLayerSettings.Line
-    layer_linhas.setLabeling(QgsVectorLayerSimpleLabeling(settings))
-    layer_linhas.setLabelsEnabled(True)
-    layer_linhas.triggerRepaint()
+    # settings = QgsPalLayerSettings()
+    # settings.fieldName = "format_number(length($geometry), 2) || ' m'"
+    # settings.isExpression = True
+    # settings.placement = QgsPalLayerSettings.Line
+    # layer_linhas.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    # layer_linhas.setLabelsEnabled(True)
+    # layer_linhas.triggerRepaint()
 
-    # Estilo simples
-    symbol = QgsLineSymbol.createSimple({
-        "color": "#000000",
-        "width": "0.6"
-    })
-    layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
+    # # Estilo simples
+    # symbol = QgsLineSymbol.createSimple({
+    #     "color": "#000000",
+    #     "width": "0.6"
+    # })
+    # layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
 
-    # Grupo
-    group = root_tree.findGroup("Lotes/Quadras - Polígonos")
-    group.addLayer(layer_linhas)
+    # # Grupo
+    # group = root_tree.findGroup("Lotes/Quadras - Polígonos")
+    # group.addLayer(layer_linhas)
 
     if ortho_path:
         rlayer = QgsRasterLayer(str(ortho_path.resolve()), "Ortofoto de Base")

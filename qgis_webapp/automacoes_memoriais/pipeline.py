@@ -427,7 +427,7 @@ def gerar_confrontacoes(
     upload_dir,
     arquivo_final_nome="final_gpkg.gpkg",
     buffer_rua=7,
-    buffer_outros=3,
+    buffer_outros=7,
     epsg_lotes=31983,
     campo_nome_outros="nome"
 ):
@@ -556,7 +556,7 @@ def gerar_confrontacoes(
         if not isinstance(lado_frente, str) or not lado_frente.strip():
             continue
 
-        geom = orient(geom, sign=1.0)
+        geom = orient(geom, sign=-1.0)
         coords = list(geom.exterior.coords)
         if coords[0] == coords[-1]:
             coords = coords[:-1]
@@ -585,10 +585,23 @@ def gerar_confrontacoes(
                 if il == idx:
                     continue
                 other = gdf_lotes.iloc[il]
-                inter = other.geometry.boundary.intersection(ln_buff)
+                inter = other.geometry.boundary.intersection(ln)
+
+                if inter.is_empty:
+                    continue
+
+                if inter.geom_type not in ("LineString", "MultiLineString"):
+                    continue
+
+
                 if not inter.is_empty:
                     L = inter.length
-                    if L >= MIN_LEN_LOTE and (L / seg_len) >= MIN_FRAC_SEG and L > melhor_score:
+                    if not (
+                            L >= MIN_LEN_LOTE or
+                            (L / seg_len) >= MIN_FRAC_SEG
+                        ):
+                            continue
+                    if L > melhor_score:
                         melhor_score = L
                         melhor_nome = f"Lote {other.get('lote_num')}"
 
@@ -599,7 +612,7 @@ def gerar_confrontacoes(
                     nome_rua = rua.get("name")
                     if not isinstance(nome_rua, str):
                         continue
-                    inter = rua["geom_buff"].intersection(ln_buff)
+                    inter = rua["geom_buff"].intersection(ln)
                     if not inter.is_empty:
                         L = inter.length
                         if L >= MIN_CONTATO_RUA and (L / seg_len) >= MIN_FRAC_RUA and L > melhor_score:
@@ -615,23 +628,22 @@ def gerar_confrontacoes(
                     if not isinstance(nome_outro, str) or not nome_outro.strip():
                         continue
 
-                    inter = outro["geom_buff"].intersection(ln_buff)
+                    inter = outro["geom_buff"].intersection(ln)
                     if inter.is_empty:
+                        continue
+
+                    # importante: filtrar toque em vértice
+                    if inter.geom_type not in ("LineString", "MultiLineString"):
                         continue
 
                     L = inter.length
 
-                    # 🔒 mesmos filtros usados no resto do sistema
-                    if L < MIN_LEN_LOTE:
-                        continue
                     if (L / seg_len) < MIN_FRAC_SEG:
                         continue
 
-                    # agora sim: OUTROS pode vencer
                     if L > melhor_score:
                         melhor_score = L
                         melhor_nome = nome_outro
-                        print("OUTRO:", nome_outro)
 
             seg_infos.append({
                 "idx": i,
@@ -838,7 +850,7 @@ def calcular_medidas_e_azimutes(
         if mx is None or my is None:
             continue
 
-        geom = orient(geom, sign=1.0)
+        geom = orient(geom, sign=-1.0)
         coords = list(geom.exterior.coords)
         if coords[0] == coords[-1]:
             coords = coords[:-1]
@@ -906,138 +918,106 @@ def calcular_medidas_e_azimutes(
 
 
 def classificar_lados_por_frente(coords, idx_frente):
+    """
+    Classifica segmentos (índices i referentes a arestas coords[i] -> coords[i+1]) em:
+    - frente
+    - fundos
+    - direita
+    - esquerda
+
+    Definição geométrica robusta:
+    - "Olhar para a rua" = direção do ponto interno (C) para o meio da frente.
+    - direita/esquerda definidas por essa direção (posição), não pela orientação do segmento.
+    - independe de CW/CCW e independe do sentido (f1->f2) do segmento de frente.
+    """
     import math
-    from shapely.geometry import Point, Polygon
+    from shapely.geometry import Polygon
 
     n = len(coords)
+    if n < 3:
+        return {"frente": [idx_frente], "fundos": [], "direita": [], "esquerda": []}
 
-    # -----------------------------------
-    # 1) Centròide interno (robusto)
-    # -----------------------------------
-    C = Polygon(coords).representative_point()
+    poly = Polygon(coords)
+    C = poly.representative_point()  # ponto garantidamente interno
 
-    # -----------------------------------
-    # 2) Vetor da frente (normalizado)
-    # -----------------------------------
-    f1 = Point(coords[idx_frente])
-    f2 = Point(coords[(idx_frente + 1) % n])
+    # --- Meio da frente ---
+    x1, y1 = coords[idx_frente]
+    x2, y2 = coords[(idx_frente + 1) % n]
+    mx_f = (x1 + x2) / 2.0
+    my_f = (y1 + y2) / 2.0
 
-    fx = f2.x - f1.x
-    fy = f2.y - f1.y
+    # --- Eixo "forward": de dentro (C) apontando para a frente/rua ---
+    fx = mx_f - C.x
+    fy = my_f - C.y
+    Lf = math.hypot(fx, fy)
+    if Lf == 0:
+        return {"frente": [idx_frente], "fundos": [], "direita": [], "esquerda": []}
 
-    L = math.hypot(fx, fy)
-    if L == 0:
-        return {
-            "frente": [idx_frente],
-            "fundos": [],
-            "direita": [],
-            "esquerda": []
-        }
-    fx /= L
-    fy /= L
+    fx /= Lf
+    fy /= Lf
 
-    # -----------------------------------
-    # 3) Normal interna (para profundidade / fundos)
-    # -----------------------------------
-    n1 = (-fy, fx)
-    n2 = ( fy, -fx)
+    # --- Eixo "right": rotação de +90° do forward ---
+    rx, ry = (fy, -fx)
 
-    mx_f = (f1.x + f2.x) / 2
-    my_f = (f1.y + f2.y) / 2
-    vc = (C.x - mx_f, C.y - my_f)
-
-    if vc[0] * n1[0] + vc[1] * n1[1] > 0:
-        nx, ny = n1
-    else:
-        nx, ny = n2
-
-    # -----------------------------------
-    # 4) Primeiro passo: calcular proj_y de todos
-    # -----------------------------------
-    proj_y_list = []
-
+    # --- Para fundos: projeção no eixo forward (frente = alto, fundos = baixo) ---
+    proj_f = []
     for i in range(n):
-
         if i == idx_frente:
             continue
+        ax, ay = coords[i]
+        bx, by = coords[(i + 1) % n]
+        mx = (ax + bx) / 2.0 - C.x
+        my = (ay + by) / 2.0 - C.y
+        depth = mx * fx + my * fy
+        proj_f.append((i, depth))
 
-        p1 = Point(coords[i])
-        p2 = Point(coords[(i + 1) % n])
+    if not proj_f:
+        return {"frente": [idx_frente], "fundos": [], "direita": [], "esquerda": []}
 
-        mx = (p1.x + p2.x) / 2 - C.x
-        my = (p1.y + p2.y) / 2 - C.y
+    depths = [d for _, d in proj_f]
+    min_depth = min(depths)  # mais negativo = mais "pra trás" = fundos
 
-        proj_y = mx * nx + my * ny
-        proj_y_list.append((i, proj_y))
-
-    # -----------------------------------
-    # 5) Determinar o LIMIAR real dos fundos
-    # -----------------------------------
-    if proj_y_list:
-        max_proj_y = max(py for _, py in proj_y_list)
-    else:
-        max_proj_y = 0
-
-    # 60% do máximo → resolução perfeita para lotes diagonais
-    limiar = max_proj_y * 0.7
-
-    # -----------------------------------
-    # 6) Classificação final
-    # -----------------------------------
-    frente_list   = [idx_frente]
-    fundos_list   = []
-    direita_list  = []
+    frente_list = [idx_frente]
+    fundos_list = []
+    direita_list = []
     esquerda_list = []
 
-    for i, proj_y in proj_y_list:
-
-        # --- FUNDOS --- (correto e estável)
-        if proj_y >= limiar:
+    for i, depth in proj_f:
+        # FUNDOS: bem próximo do "mais fundo" real (critério restritivo)
+        # (se quiser, ajuste 0.15 -> 0.20 conforme seus lotes)
+        if depth <= min_depth * 0.85:  # min_depth é negativo; 0.85 mantém perto do extremo
             fundos_list.append(i)
             continue
 
-        # --- Direita / esquerda por cross-product --- (100% estável)
-        p1 = Point(coords[i])
-        p2 = Point(coords[(i + 1) % n])
-        sx = p2.x - p1.x
-        sy = p2.y - p1.y
+        # Direita/esquerda: projeção no eixo "right"
+        ax, ay = coords[i]
+        bx, by = coords[(i + 1) % n]
+        mx = (ax + bx) / 2.0 - C.x
+        my = (ay + by) / 2.0 - C.y
+        side = mx * rx + my * ry
 
-        cross = fx * sy - fy * sx
-
-        if cross < 0:
+        if side > 0:
             direita_list.append(i)
-        elif cross > 0:
-            esquerda_list.append(i)
         else:
-            # perpendicular → decide pela projeção na frente
-            mx = (p1.x + p2.x) / 2 - C.x
-            my = (p1.y + p2.y) / 2 - C.y
-            proj_x = mx * fx + my * fy
+            esquerda_list.append(i)
 
-            if proj_x >= 0:
-                esquerda_list.append(i)
-            else:
-                direita_list.append(i)
-
-    # -----------------------------------
-    # 7) retorno final no formato desejado
-    # -----------------------------------
     return {
-        "frente":    frente_list,
-        "fundos":    fundos_list,
-        "direita":   direita_list,
-        "esquerda":  esquerda_list
+        "frente": frente_list,
+        "fundos": fundos_list,
+        "direita": direita_list,
+        "esquerda": esquerda_list
     }
 
-def _memorial_lote_completo(row, nucleo, municipio, uf):
-    """
-    Gera memorial descritivo completo, sentido horário,
-    iniciando SEMPRE pela frente correta do lote,
-    usando Frente_MX / Frente_MY como referência absoluta.
-    """
-
-    import math
-    from shapely.geometry import Point, LineString, Polygon
+def _memorial_lote_completo(
+    row,
+    nucleo,
+    municipio,
+    uf,
+    gdf_lotes,
+    gdf_ruas,
+    gdf_outros=None
+):
+    from shapely.geometry import Point, LineString
     from shapely.geometry.polygon import orient
 
     geom = row.geometry
@@ -1047,9 +1027,6 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     quadra = row.get("quadra")
     lote   = row.get("lote_num")
 
-    # --------------------------------------------------
-    # Normalizar geometria
-    # --------------------------------------------------
     geom = orient(geom, sign=-1.0)
     coords = list(geom.exterior.coords)
     if coords[0] == coords[-1]:
@@ -1059,12 +1036,8 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
     if n < 3:
         return "Lote com geometria insuficiente."
 
-    # --------------------------------------------------
-    # 🔒 Frente geométrica absoluta
-    # --------------------------------------------------
     mx = row.get("Frente_MX")
     my = row.get("Frente_MY")
-
     if mx is None or my is None:
         return "Frente geométrica não definida."
 
@@ -1079,18 +1052,86 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
                 best_d, best_i = d, i
         return best_i
 
-    idx_frente = idx_segmento_por_ponto(coords, P_frente)
-    if idx_frente is None:
-        idx_frente = 0
-
-    # --------------------------------------------------
-    # Classificação dos lados
-    # --------------------------------------------------
+    idx_frente = idx_segmento_por_ponto(coords, P_frente) or 0
     lados = classificar_lados_por_frente(coords, idx_frente)
 
-    # --------------------------------------------------
+    # parâmetros (iguais à sua lógica)
+    MIN_LEN_LOTE = 1.0
+    MIN_FRAC_SEG = 0.20
+
+    MIN_CONTATO_RUA = 1.0
+    MIN_FRAC_RUA = 0.30
+
+    def confronto_por_segmento(i):
+        # fallback se não tiver datasets carregados
+        if gdf_lotes is None or gdf_ruas is None:
+            return "Área não identificada"
+
+        p1 = coords[i]
+        p2 = coords[(i + 1) % n]
+        ln = LineString([p1, p2])
+        seg_len = ln.length
+        if seg_len == 0:
+            return "Área não identificada"
+
+        melhor_nome = "Área não identificada"
+        melhor_score = 0.0
+
+        # 1) lotes vizinhos
+        # IMPORTANTE: não usar "sindex" do row; use do gdf (injete também se quiser performance)
+        for _, other in gdf_lotes.iterrows():
+            if other.get("lote_num") == lote:
+                continue
+            inter = other.geometry.boundary.intersection(ln)
+            if inter.is_empty:
+                continue
+            if inter.geom_type not in ("LineString", "MultiLineString"):
+                continue
+            L = inter.length
+
+            # regra híbrida: absoluto OU relativo (para segmentos < 1m)
+            if not (L >= MIN_LEN_LOTE or (L / seg_len) >= MIN_FRAC_SEG):
+                continue
+
+            if L > melhor_score:
+                melhor_score = L
+                melhor_nome = f"Lote {other.get('lote_num')}"
+
+        # 2) ruas (usa buffer das ruas, como no teu gerador)
+        if melhor_score == 0.0 and "geom_buff" in gdf_ruas.columns:
+            for _, rua in gdf_ruas.iterrows():
+                nome_rua = rua.get("name")
+                if not isinstance(nome_rua, str) or not nome_rua.strip():
+                    continue
+                inter = rua["geom_buff"].intersection(ln)
+                if inter.is_empty:
+                    continue
+                if inter.geom_type not in ("LineString", "MultiLineString"):
+                    continue
+                L = inter.length
+                if L >= MIN_CONTATO_RUA and (L / seg_len) >= MIN_FRAC_RUA and L > melhor_score:
+                    melhor_score = L
+                    melhor_nome = nome_rua
+
+        # 3) outros
+        if gdf_outros is not None and "geom_buff" in gdf_outros.columns:
+            for _, outro in gdf_outros.iterrows():
+                nome_outro = outro.get("nome")
+                if not isinstance(nome_outro, str) or not nome_outro.strip():
+                    continue
+                inter = outro["geom_buff"].intersection(ln)
+                if inter.is_empty:
+                    continue
+                if inter.geom_type not in ("LineString", "MultiLineString"):
+                    continue
+                L = inter.length
+                if (L / seg_len) >= MIN_FRAC_SEG and L > melhor_score:
+                    melhor_score = L
+                    melhor_nome = nome_outro
+
+        return melhor_nome
+
     # Helpers de texto
-    # --------------------------------------------------
     def fmt_coord(v):
         return format(float(v), ",.4f").replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -1108,25 +1149,9 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
             return "do lado esquerdo"
         return "pelo perímetro"
 
-    def lado_confronto(i):
-        if i in lados["frente"]:
-            return row.get("Conf_Frente") or "Área não identificada"
-        if i in lados["direita"]:
-            return row.get("Conf_Direita") or "Área não identificada"
-        if i in lados["fundos"]:
-            return row.get("Conf_Fundos") or "Área não identificada"
-        if i in lados["esquerda"]:
-            return row.get("Conf_Esquerda") or "Área não identificada"
-
-        return "Área não identificada"
-
-    # --------------------------------------------------
-    # Deflexão correta (sentido do percurso)
-    # --------------------------------------------------
     def deflexao(k):
         if k == 0:
             return ""
-
         i_prev = (idx_frente + k - 1) % n
         i_curr = (idx_frente + k) % n
         i_next = (idx_frente + k + 1) % n
@@ -1139,7 +1164,6 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         v2 = (x3 - x2, y3 - y2)
 
         cross = v1[0] * v2[1] - v1[1] * v2[0]
-
         if cross < 0:
             return "deste ponto deflete à direita"
         elif cross > 0:
@@ -1147,9 +1171,6 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         else:
             return "deste ponto segue em linha"
 
-    # --------------------------------------------------
-    # Introdução
-    # --------------------------------------------------
     area = geom.area
     perim = geom.length
 
@@ -1161,12 +1182,8 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
 
     partes = [intro]
 
-    # --------------------------------------------------
-    # Percurso completo a partir da frente correta
-    # --------------------------------------------------
     for k in range(n):
         i = (idx_frente + k) % n
-
         x1, y1 = coords[i]
         x2, y2 = coords[(i + 1) % n]
 
@@ -1176,7 +1193,7 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
         coord1 = f"(EX: {fmt_coord(x1)}  NY: {fmt_coord(y1)})"
         coord2 = f"(EX: {fmt_coord(x2)}  NY: {fmt_coord(y2)})"
 
-        confronto = lado_confronto(i)
+        confronto = confronto_por_segmento(i)  # ✅ aqui muda tudo
         tipo_lado = nome_lado(i)
         frase_deflexao = deflexao(k)
 
@@ -1202,29 +1219,63 @@ def _memorial_lote_completo(row, nucleo, municipio, uf):
 
     return " ".join(partes)
 
-def gerar_memorial_quadra(upload_dir: Path,
-                          arquivo_final_nome: str,
-                          quadra_alvo,
-                          nucleo: str,
-                          municipio: str,
-                          uf: str,
-                          promotor: str = "Instituto Cidade Legal",
-                          saida_dir: Path | None = None):
+def gerar_memorial_quadra(
+    upload_dir: Path,
+    arquivo_final_nome: str,
+    quadra_alvo,
+    nucleo: str,
+    municipio: str,
+    uf: str,
+    promotor: str = "Instituto Cidade Legal",
+    saida_dir: Path | None = None,
+    buffer_outros: float = 7.0,
+):
 
+    # --------------------------------------------------
+    # Caminhos
+    # --------------------------------------------------
     final_path = upload_dir / "final" / arquivo_final_nome
-    gdf = gpd.read_file(final_path)
+    ruas_path  = upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg"
 
-    # normalizar quadra para string
-    gdf["quadra_str"] = gdf["quadra"].astype(str)
+    outros_path1 = upload_dir / "projeto_qgis" / "outros.gpkg"
+    outros_path2 = upload_dir / "outros.gpkg"
+
+    # --------------------------------------------------
+    # Carregar dados
+    # --------------------------------------------------
+    gdf_lotes = gpd.read_file(final_path)
+    gdf_ruas  = gpd.read_file(ruas_path).to_crs(gdf_lotes.crs)
+
+    # buffer das ruas (necessário para o memorial por segmento)
+    if "geom_buff" not in gdf_ruas.columns:
+        gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(7)
+
+    # OUTROS (opcional)
+    gdf_outros = None
+    if outros_path1.exists():
+        gdf_outros = gpd.read_file(outros_path1).to_crs(gdf_lotes.crs)
+    elif outros_path2.exists():
+        gdf_outros = gpd.read_file(outros_path2).to_crs(gdf_lotes.crs)
+
+    if gdf_outros is not None:
+        gdf_outros["geom_buff"] = gdf_outros.geometry.buffer(buffer_outros)
+
+    # --------------------------------------------------
+    # Filtrar quadra
+    # --------------------------------------------------
+    gdf_lotes["quadra_str"] = gdf_lotes["quadra"].astype(str)
     quadra_str = str(quadra_alvo)
 
-    lotes_quadra = gdf[gdf["quadra_str"] == quadra_str].copy()
+    lotes_quadra = gdf_lotes[gdf_lotes["quadra_str"] == quadra_str].copy()
     if lotes_quadra.empty:
         print(f"⚠ Nenhum lote encontrado para a quadra {quadra_str}.")
         return None
 
     lotes_quadra = lotes_quadra.sort_values(by="lote_num")
 
+    # --------------------------------------------------
+    # Saída
+    # --------------------------------------------------
     if saida_dir is None:
         saida_dir = upload_dir / "memoriais"
     saida_dir.mkdir(parents=True, exist_ok=True)
@@ -1234,7 +1285,9 @@ def gerar_memorial_quadra(upload_dir: Path,
 
     doc = Document()
 
-    # Cabeçalho padrão
+    # --------------------------------------------------
+    # Cabeçalho
+    # --------------------------------------------------
     _add_cabecalho_memorial(
         doc,
         titulo="MEMORIAL DESCRITIVO",
@@ -1245,42 +1298,37 @@ def gerar_memorial_quadra(upload_dir: Path,
         promotor=promotor
     )
 
-    # Título "DESCRIÇÃO"
-    p_desc_titulo = doc.add_paragraph()
-    p_desc_titulo.alignment = 1  # centralizado
-    #run_desc = p_desc_titulo.add_run("DESCRIÇÃO")
-    #run_desc.bold = True
-
-    #doc.add_paragraph()
-
+    # --------------------------------------------------
+    # Percorrer lotes
+    # --------------------------------------------------
     for _, row in lotes_quadra.iterrows():
         quadra = row.get("quadra")
         lote_num = row.get("lote_num")
         geom = row.geometry
+
         area_m2 = geom.area if geom is not None else None
         perimetro_m = geom.length if geom is not None else None
 
-        # Título do lote dentro da quadra
+        # Título do lote
         p_header_lote = doc.add_paragraph()
         run = p_header_lote.add_run(f"Quadra: {quadra}\nLote: {lote_num}")
         run.bold = True
 
-        # Área/perímetro destacados
         if area_m2 is not None:
             run2 = p_header_lote.add_run(f"\nÁrea: {_fmt_num_br(area_m2, 2)} m²\n")
             run2.bold = True
-        if perimetro_m is not None:
-            pass
-            #p_info.add_run(f"Perímetro: {_fmt_num_br(perimetro_m, 2)} m\n")
 
         doc.add_paragraph()
 
-        # Texto completo estilo exemplo
+        # 🔥 CHAMADA CORRETA DO MEMORIAL
         texto_lote = _memorial_lote_completo(
             row=row,
             nucleo=nucleo,
             municipio=municipio,
-            uf=uf
+            uf=uf,
+            gdf_lotes=gdf_lotes,
+            gdf_ruas=gdf_ruas,
+            gdf_outros=gdf_outros
         )
 
         p_desc_lote = doc.add_paragraph()
@@ -1288,9 +1336,11 @@ def gerar_memorial_quadra(upload_dir: Path,
         p_desc_lote.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         p_desc_lote.add_run(texto_lote)
 
-        doc.add_paragraph()  # espaço entre lotes
+        doc.add_paragraph()
 
-    # Rodapé geral
+    # --------------------------------------------------
+    # Rodapé
+    # --------------------------------------------------
     doc.add_paragraph()
     rod = doc.add_paragraph()
     rod.add_run(
