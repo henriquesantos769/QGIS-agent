@@ -25,7 +25,9 @@ from qgis.core import (
     QgsVectorLayerSimpleLabeling,
     QgsLineSymbol,
     QgsSingleSymbolRenderer,
-    QgsWkbTypes
+    QgsWkbTypes,
+    QgsTextBufferSettings,
+    QgsUnitTypes
 )
 from pathlib import Path
 from qgis.PyQt.QtGui import QColor, QFont
@@ -330,6 +332,10 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     
     linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
 
+    # (Opcional mas recomendado) remove arquivo anterior pra evitar erro de escrita
+    if linhas_path.exists():
+        linhas_path.unlink()
+
     # 1) reprojeta de verdade (para CRS em metros)
     reproj = processing.run(
         "native:reprojectlayer",
@@ -354,19 +360,86 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         "native:explodelines",
         {
             "INPUT": contorno,
+            "OUTPUT": "memory:"
+        }
+    )["OUTPUT"]
+
+    # --------------------------------------------------
+    # 🔥 4) Criar chave única por segmento (independente da direção)
+    #     Isso resolve lotes colados com 2 linhas iguais
+    # --------------------------------------------------
+    expr_key = """
+    with_variable('x1', round(x(start_point($geometry)), 3),
+    with_variable('y1', round(y(start_point($geometry)), 3),
+    with_variable('x2', round(x(end_point($geometry)), 3),
+    with_variable('y2', round(y(end_point($geometry)), 3),
+    with_variable('swap', (@x1 > @x2) OR (@x1 = @x2 AND @y1 > @y2),
+    if(@swap,
+        concat(@x2,';',@y2,';',@x1,';',@y1),
+        concat(@x1,';',@y1,';',@x2,';',@y2)
+    )
+    )))))
+    """
+
+    segs_keyed = processing.run(
+        "native:fieldcalculator",
+        {
+            "INPUT": segs,
+            "FIELD_NAME": "seg_key",
+            "FIELD_TYPE": 2,   # String
+            "FIELD_LENGTH": 80,
+            "FIELD_PRECISION": 0,
+            "FORMULA": expr_key,
+            "OUTPUT": "memory:"
+        }
+    )["OUTPUT"]
+
+    # 5) Dissolver por seg_key -> 1 feição por aresta colada
+    segs_unique = processing.run(
+        "native:dissolve",
+        {
+            "INPUT": segs_keyed,
+            "FIELD": ["seg_key"],
             "OUTPUT": str(linhas_path)
         }
     )["OUTPUT"]
 
+    # 6) carregar camada no projeto
     layer_linhas = QgsVectorLayer(str(linhas_path), "Lotes - Distâncias", "ogr")
     project.addMapLayer(layer_linhas, False)
 
-    # #Rótulos = comprimento do segmento (2 casas)
+    # Rótulos = comprimento do segmento (2 casas)
     settings = QgsPalLayerSettings()
     settings.fieldName = "format_number(length($geometry), 2) || ' m'"
     settings.isExpression = True
     settings.placement = QgsPalLayerSettings.Line
-    settings.mergeLines = True
+
+    # forçar exibição (pra não “sumir” em trechos pequenos/colados)
+    settings.displayAll = True
+    settings.allowOverlap = True
+    settings.minFeatureSize = 0.0
+    settings.repeatDistance = 0
+
+    text_format = QgsTextFormat()
+
+    text_format.setFont(QFont("Arial"))
+    # text_format.setSize(0.5)  # 🔹 tamanho em METROS 
+    # text_format.setSizeUnit(QgsUnitTypes.RenderMetersInMapUnits)
+
+    text_format.setSize(10)  # 🔹 tamanho em pt
+
+    text_format.setColor(QColor("#000000"))
+
+    # (opcional) buffer branco pra legibilidade
+    buffer = QgsTextBufferSettings()
+    buffer.setEnabled(True)
+    buffer.setSize(1.5)  # metros
+    #buffer.setSizeUnit(QgsUnitTypes.RenderMetersInMapUnits) # metros
+    buffer.setColor(QColor("#FFFFFF"))
+    text_format.setBuffer(buffer)
+
+    settings.setFormat(text_format)
+
     layer_linhas.setLabeling(QgsVectorLayerSimpleLabeling(settings))
     layer_linhas.setLabelsEnabled(True)
     layer_linhas.triggerRepaint()
@@ -379,7 +452,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
 
     # Grupo
-    group = root_tree.findGroup("Lotes/Quadras - Polígonos")
+    group = root_tree.findGroup("Lotes/Quadras - Polígonos") or root_tree.addGroup("Lotes/Quadras - Polígonos")
     group.addLayer(layer_linhas)
 
     if ortho_path:
