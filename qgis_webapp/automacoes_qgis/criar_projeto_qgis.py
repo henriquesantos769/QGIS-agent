@@ -25,13 +25,16 @@ from qgis.core import (
     QgsVectorLayerSimpleLabeling,
     QgsLineSymbol,
     QgsSingleSymbolRenderer,
+    QgsWkbTypes
 )
 from pathlib import Path
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.PyQt.QtCore import QVariant
 import zipfile
 import geopandas as gpd
-from .stylize import stylize_layer_lotes, stylize_layer_ruas, stylize_layer_quadras
+from .stylize import (stylize_layer_ruas,
+                        stylize_layer_quadras, stylize_layer_outros,
+                        aplicar_rotulos_lotes_numero_e_area)
 import qgis.core as qgs
 import xml.etree.ElementTree as ET
 import copy
@@ -127,7 +130,6 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     Processing.initialize()
     QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
 
-
     project = QgsProject.instance()
     project.removeAllMapLayers()
     project.clear()
@@ -149,6 +151,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         ("quadras/quadras_m2s.gpkg", "Quadras"),
         ("quadras/quadras_rotulo_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
+        ("outros/outros.gpkg", "Outros")
     ]
 
     final_layer_obj = None
@@ -178,6 +181,8 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
             stylize_layer_ruas(layer)
         elif "quadras" in rel_path.lower():
             stylize_layer_quadras(layer)
+        elif "outros" in rel_path.lower():
+            stylize_layer_outros(layer)
 
         if "final" in rel_path.lower():
             final_layer_obj = layer
@@ -313,7 +318,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 print("🎨 Renderer STATUS aplicado após commit (salvo corretamente no projeto).")
 
             # --- 6. Estilo visual adicional (rótulos etc.) ---
-            stylize_layer_lotes(layer)
+            aplicar_rotulos_lotes_numero_e_area(layer)
             print("🎨 Simbologia e campos aplicados na camada final.")
 
         # --- 5. Propriedades globais QFieldSync e árvore de camadas ---
@@ -323,58 +328,59 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         group.addLayer(layer)
         print(f"✅ Camada adicionada: {rel_path} | ID: {layer.id()}")
     
-    # linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
+    linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
 
-    # # 1) reprojeta de verdade (para CRS em metros)
-    # reproj = processing.run(
-    #     "native:reprojectlayer",
-    #     {
-    #         "INPUT": final_layer_obj,
-    #         "TARGET_CRS": QgsCoordinateReferenceSystem(DEFAULT_CRS),
-    #         "OUTPUT": "memory:"
-    #     }
-    # )["OUTPUT"]
+    # 1) reprojeta de verdade (para CRS em metros)
+    reproj = processing.run(
+        "native:reprojectlayer",
+        {
+            "INPUT": final_layer_obj,
+            "TARGET_CRS": QgsCoordinateReferenceSystem(DEFAULT_CRS),
+            "OUTPUT": "memory:"
+        }
+    )["OUTPUT"]
 
-    # # 2) polígono -> linha (contorno completo)
-    # contorno = processing.run(
-    #     "native:polygonstolines",
-    #     {
-    #         "INPUT": reproj,
-    #         "OUTPUT": "memory:"
-    #     }
-    # )["OUTPUT"]
+    # 2) polígono -> linha (contorno completo)
+    contorno = processing.run(
+        "native:polygonstolines",
+        {
+            "INPUT": reproj,
+            "OUTPUT": "memory:"
+        }
+    )["OUTPUT"]
 
-    # # 3) quebra a linha em segmentos (cada aresta vira uma feição)
-    # segs = processing.run(
-    #     "native:explodelines",
-    #     {
-    #         "INPUT": contorno,
-    #         "OUTPUT": str(linhas_path)
-    #     }
-    # )["OUTPUT"]
+    # 3) quebra a linha em segmentos (cada aresta vira uma feição)
+    segs = processing.run(
+        "native:explodelines",
+        {
+            "INPUT": contorno,
+            "OUTPUT": str(linhas_path)
+        }
+    )["OUTPUT"]
 
-    # layer_linhas = QgsVectorLayer(str(linhas_path), "Lotes - Distâncias", "ogr")
-    # project.addMapLayer(layer_linhas, False)
+    layer_linhas = QgsVectorLayer(str(linhas_path), "Lotes - Distâncias", "ogr")
+    project.addMapLayer(layer_linhas, False)
 
-    # Rótulos = comprimento do segmento (2 casas)
-    # settings = QgsPalLayerSettings()
-    # settings.fieldName = "format_number(length($geometry), 2) || ' m'"
-    # settings.isExpression = True
-    # settings.placement = QgsPalLayerSettings.Line
-    # layer_linhas.setLabeling(QgsVectorLayerSimpleLabeling(settings))
-    # layer_linhas.setLabelsEnabled(True)
-    # layer_linhas.triggerRepaint()
+    # #Rótulos = comprimento do segmento (2 casas)
+    settings = QgsPalLayerSettings()
+    settings.fieldName = "format_number(length($geometry), 2) || ' m'"
+    settings.isExpression = True
+    settings.placement = QgsPalLayerSettings.Line
+    settings.mergeLines = True
+    layer_linhas.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    layer_linhas.setLabelsEnabled(True)
+    layer_linhas.triggerRepaint()
 
-    # # Estilo simples
-    # symbol = QgsLineSymbol.createSimple({
-    #     "color": "#000000",
-    #     "width": "0.6"
-    # })
-    # layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
+    # Estilo simples
+    symbol = QgsLineSymbol.createSimple({
+        "color": "#000000",
+        "width": "0.6"
+    })
+    layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
 
-    # # Grupo
-    # group = root_tree.findGroup("Lotes/Quadras - Polígonos")
-    # group.addLayer(layer_linhas)
+    # Grupo
+    group = root_tree.findGroup("Lotes/Quadras - Polígonos")
+    group.addLayer(layer_linhas)
 
     if ortho_path:
         rlayer = QgsRasterLayer(str(ortho_path.resolve()), "Ortofoto de Base")

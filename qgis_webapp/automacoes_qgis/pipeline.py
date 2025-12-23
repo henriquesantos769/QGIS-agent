@@ -19,6 +19,7 @@ import numpy as np
 import subprocess
 import os
 import math
+import pandas as pd
 
 Processing.initialize()
 QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
@@ -64,6 +65,23 @@ def dxf_to_shp(dxf_path: Path, out_path: Path):
         raise Exception("❌ Camada de linhas inválida.")
     save_layer(layer, out_path)
     print("Linhas salvas:", out_path)
+    return layer
+
+def dxf_text_to_gpkg(dxf_path: Path, out_gpkg: Path, layer_name="dxf_textos"):
+    uri_text = f"{dxf_path}|layername=entities|geometrytype=Point"
+    layer = QgsVectorLayer(uri_text, layer_name, "ogr")
+
+    if not layer.isValid():
+        raise Exception("❌ Camada de textos (TEXT) inválida.")
+
+    save_layer(
+        layer,
+        out_gpkg,
+        driver="GPKG",
+        layer_name=layer_name
+    )
+
+    print("Textos DXF (TEXT) salvos em GPKG:", out_gpkg)
     return layer
 
 
@@ -328,6 +346,19 @@ def extrair_ruas_overpass(quadras, out_dir):
     if features:
         # Ainda em EPSG:4326
         gdf = gpd.GeoDataFrame(features, geometry="geometry", crs="EPSG:4326")
+
+        gdf["name"] = gdf["name"].replace("", pd.NA)
+
+        mask_sem_nome = gdf["name"].isna()
+
+        # Quantidade exata de ruas sem nome
+        n = mask_sem_nome.sum()
+
+        # Gera somente os nomes necessários
+        nomes_padrao = [f"Rua Sem Denominação {i:02d}" for i in range(1, n + 1)]
+
+        # Atribuição correta: tamanhos compatíveis
+        gdf.loc[mask_sem_nome, "name"] = nomes_padrao
 
         # 🔹 Usa as geometrias Shapely das quadras (já em EPSG:4326)
         area_union = unary_union(geoms)  # geoms é lista de Shapely Polygons

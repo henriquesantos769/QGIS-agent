@@ -12,7 +12,7 @@ from .pipeline import (
     dxf_to_shp, corrigir_e_snap, linhas_para_poligonos, dissolve_para_quadras,
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
-    converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision
+    converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, dxf_text_to_gpkg
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -85,7 +85,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "quadras_single2": upload_dir / "quadras" / "quadras_m2s.gpkg",
             "quadras_pts": upload_dir / "quadras" / "quadras_rotulo_pt.gpkg",
             "lotes_join": upload_dir / "lotes_poligonos" / "lotes_com_quadra.shp",
-            "arquivo_final": upload_dir / "final" / "final.shp"
+            "arquivo_final": upload_dir / "final" / "final.shp",
+            "outros": upload_dir / "outros" / "outros.gpkg"
         }
 
         for p in paths.values():
@@ -93,6 +94,10 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
 
         atualizar_progresso_thread(session_key, 3, "🔧 Convertendo DXF em camadas vetoriais...")
         linhas = dxf_to_shp(dxf_path, paths["linhas"])
+
+        atualizar_progresso_thread(session_key, 4, "🔧 Gerando camada de confrontações...")
+        outros = dxf_text_to_gpkg(dxf_path, paths["outros"], "outros")
+
 
         atualizar_progresso_thread(session_key, 4, "🧩 Corrigindo e aplicando snap...")
         linhas_fix = corrigir_e_snap(linhas, paths)
@@ -305,7 +310,7 @@ def download_pacote_zip(request):
         return HttpResponse("Projeto QGIS não encontrado. Gere o projeto antes.")
 
     export_folder = upload_dir / "qfield_export"
-    include_data_folders = ["final", "ruas", "quadras", "ortofoto"]
+    include_data_folders = ["final", "ruas", "quadras", "ortofoto", "outros"]
 
     try:
         package_project_for_qfield(

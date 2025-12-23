@@ -9,42 +9,78 @@ from qgis.core import (
     QgsMarkerSymbol,
     QgsWkbTypes,
     QgsUnitTypes,
-    QgsSingleSymbolRenderer
+    QgsSingleSymbolRenderer,
+    QgsRuleBasedLabeling,
+    Qgis
 )
 from PyQt5.QtGui import QColor, QFont
 
-def stylize_layer_lotes(layer):
+def aplicar_rotulos_lotes_numero_e_area(layer):
     if not layer or not layer.isValid():
-        print("❌ Camada inválida para estilização.")
+        print("❌ Camada inválida para rótulos.")
         return
 
-    # 👉 NÃO mexe no renderer aqui, deixa o categorizado em paz
-    # Só configura rótulos
+    # ===============================
+    # 🔹 RÓTULO 1 — NÚMERO DO LOTE
+    # ===============================
+    num_settings = QgsPalLayerSettings()
+    num_settings.isExpression = False
+    num_settings.fieldName = "lote_num"
+    num_settings.placement = Qgis.LabelPlacement.OverPoint
+    num_settings.centroidInside = True
+    num_settings.allowOverlap = True
 
-    label_settings = QgsPalLayerSettings()
-    text_format = QgsTextFormat()
+    num_format = QgsTextFormat()
+    num_format.setFont(QFont("Arial", 13, QFont.Bold))
+    num_format.setColor(QColor("#092DDC"))
 
-    text_format.setFont(QFont("Arial", 13))
-    text_format.setSize(13)
-    text_format.setColor(QColor("#092DDC"))
+    buffer = QgsTextBufferSettings()
+    buffer.setEnabled(True)
+    buffer.setSize(1.2)
+    buffer.setColor(QColor("#FFFFFF"))
+    num_format.setBuffer(buffer)
 
-    buffer_settings = QgsTextBufferSettings()
-    buffer_settings.setEnabled(True)
-    buffer_settings.setSize(1.2)
-    buffer_settings.setOpacity(0.95)
-    buffer_settings.setColor(QColor("#FFFFFF"))
-    text_format.setBuffer(buffer_settings)
+    num_settings.setFormat(num_format)
 
-    label_settings.setFormat(text_format)
-    label_settings.fieldName = "lote_num"
-    label_settings.enabled = True
+    rule_num = QgsRuleBasedLabeling.Rule(num_settings)
 
-    labeling = QgsVectorLayerSimpleLabeling(label_settings)
+    # ===============================
+    # 🔹 RÓTULO 2 — ÁREA DO LOTE
+    # ===============================
+    area_settings = QgsPalLayerSettings()
+    area_settings.isExpression = True
+    area_settings.fieldName = "format_number($area, 2) || ' m²'"
+    area_settings.placement = Qgis.LabelPlacement.OverPoint
+    area_settings.centroidInside = True
+
+    # 🔽 deslocamento para baixo (mm)
+    area_settings.yOffset = -5.0
+
+    area_settings.allowOverlap = True
+    area_settings.displayAll = True
+
+    area_format = QgsTextFormat()
+    area_format.setFont(QFont("Arial", 9))
+    area_format.setColor(QColor("#55A4FF"))
+
+    area_settings.setFormat(area_format)
+
+    rule_area = QgsRuleBasedLabeling.Rule(area_settings)
+
+    # ===============================
+    # 🔹 COMBINAR OS DOIS RÓTULOS
+    # ===============================
+    root_rule = QgsRuleBasedLabeling.Rule(None)
+    root_rule.appendChild(rule_num)
+    root_rule.appendChild(rule_area)
+
+    labeling = QgsRuleBasedLabeling(root_rule)
+
     layer.setLabeling(labeling)
     layer.setLabelsEnabled(True)
-
     layer.triggerRepaint()
-    print("✨ Rótulos aplicados à camada de lotes (renderer preservado).")
+
+    print("✨ Rótulos de número + área aplicados com sucesso.")
 
 def stylize_layer_ruas(layer):
     """
@@ -58,7 +94,7 @@ def stylize_layer_ruas(layer):
 
     # ===================== ESTILO DAS LINHAS =====================
     symbol = QgsLineSymbol.createSimple({
-        'color': "#0B48FF",   # amarelo
+        'color': "#0B48FF",   
         'width': '0.5',
         'penstyle': 'solid'
     })
@@ -141,3 +177,77 @@ def stylize_layer_quadras(layer):
     layer.triggerRepaint()
     print("✨ Camada de quadras estilizada: números em 'neon' vermelho, pontos ocultos.")
 
+def stylize_layer_outros(layer):
+    """
+    Estilo para camada 'outros':
+    - Linha lilás forte
+    - Texto vermelho com buffer branco
+    - Compatível com LineString e Point
+    """
+    if not layer or not layer.isValid():
+        print("❌ Camada inválida para estilização.")
+        return
+
+    geom_type = layer.geometryType()
+
+    # ===================== ESTILO DA GEOMETRIA =====================
+    if geom_type == QgsWkbTypes.LineGeometry:
+        # ---- Linha lilás forte ----
+        symbol = QgsLineSymbol.createSimple({
+            'color': '#B100FF',   # lilás forte
+            'width': '0.7',
+            'penstyle': 'solid'
+        })
+        layer.renderer().setSymbol(symbol)
+
+    elif geom_type == QgsWkbTypes.PointGeometry:
+        # ---- Ponto discreto (quase invisível) ----
+        symbol = QgsMarkerSymbol.createSimple({
+            "color": "177,0,255,80",          # lilás translúcido
+            "outline_color": "177,0,255,180",
+            "size": "1.6"
+        })
+        layer.renderer().setSymbol(symbol)
+
+    # ===================== CONFIGURAÇÃO DE RÓTULOS =====================
+    label_settings = QgsPalLayerSettings()
+    text_format = QgsTextFormat()
+
+    # Texto vermelho
+    text_format.setFont(QFont("Arial", 11))
+    text_format.setSize(11)
+    text_format.setColor(QColor("#E60000"))  # vermelho forte
+
+    # Buffer branco para legibilidade
+    buffer_settings = QgsTextBufferSettings()
+    buffer_settings.setEnabled(True)
+    buffer_settings.setSize(1.2)
+    buffer_settings.setColor(QColor("#FFFFFF"))
+    buffer_settings.setOpacity(0.95)
+    text_format.setBuffer(buffer_settings)
+
+    label_settings.setFormat(text_format)
+
+    # Campo de texto (padrão do seu pipeline)
+    if "nome" in layer.fields().names():
+        label_settings.fieldName = "nome"
+    elif "Text" in layer.fields().names():
+        label_settings.fieldName = "Text"
+    elif "text" in layer.fields().names():
+        label_settings.fieldName = "text"
+    else:
+        print("⚠️ Nenhum campo de texto encontrado para rótulo em 'outros'.")
+        return
+
+    label_settings.enabled = True
+
+    # Posicionamento de rótulo
+    if geom_type == QgsWkbTypes.LineGeometry:
+        label_settings.placement = QgsPalLayerSettings.Line
+
+    labeling = QgsVectorLayerSimpleLabeling(label_settings)
+    layer.setLabeling(labeling)
+    layer.setLabelsEnabled(True)
+
+    layer.triggerRepaint()
+    print("✨ Estilo aplicado à camada 'outros' (linha lilás, texto vermelho).")

@@ -291,7 +291,7 @@ def create_final_gpkg(layer_path: Path) -> Path:
 
 def atribuir_ruas_frente(upload_dir,
                          arquivo_final_nome="final.shp",
-                         buffer_rua=7,
+                         buffer_rua=8,
                          min_testada=1.0):
     """
     Atribui às geometrias de lote:
@@ -426,7 +426,7 @@ def atribuir_ruas_frente(upload_dir,
 def gerar_confrontacoes(
     upload_dir,
     arquivo_final_nome="final_gpkg.gpkg",
-    buffer_rua=7,
+    buffer_rua=8,
     buffer_outros=7,
     epsg_lotes=31983,
     campo_nome_outros="nome"
