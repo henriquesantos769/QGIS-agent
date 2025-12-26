@@ -4,10 +4,6 @@
 const dropProject = document.getElementById("dropzone-qgis");
 const fileInputProject = document.getElementById("fileInputProject");
 
-const layerLotes = document.getElementById("layerLotes");
-const layerQuadras = document.getElementById("layerQuadras");
-const layerRuas = document.getElementById("layerRuas");
-
 const startBtn = document.getElementById("startBtn");
 const progressArea = document.getElementById("progressArea");
 const resetBtn = document.getElementById("resetBtn");
@@ -101,7 +97,11 @@ function handleChosenProject(file) {
 
 // Força abertura do seletor ao clicar no card inteiro
 dropProject.addEventListener("click", () => {
-  fileInputProject.click();
+  // fileInputProject.click();
+});
+
+fileInputProject.addEventListener("click", e => {
+  e.stopPropagation();
 });
 
 // change (padrão)
@@ -157,16 +157,8 @@ async function enviarProjetoQGIS() {
     return false;
   }
 
-  if (!layerLotes.value.trim()) {
-    showToast("❌ Informe o nome da camada de lotes");
-    return false;
-  }
-
   const formData = new FormData();
   formData.append("arquivo", selectedProject);
-  formData.append("layer_lotes", layerLotes.value.trim());
-  formData.append("layer_quadras", layerQuadras.value.trim());
-  formData.append("layer_ruas", layerRuas.value.trim());
 
   setLoading(startBtn, "Processando...");
   showToast("⏳ Processando projeto QGIS...");

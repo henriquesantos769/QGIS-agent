@@ -48,6 +48,16 @@ def save_layer(layer: QgsVectorLayer, file_path: Path, driver="ESRI Shapefile", 
         raise RuntimeError(f"Falha ao salvar '{file_path}': {msg}")
     return file_path
 
+def inferir_utm_zone(layer):
+    extent = layer.extent()
+    x = extent.center().x()
+    y = extent.center().y()
+
+    # longitude aproximada
+    lon = (x - 500000) / 111320  # heurística grosseira
+    zone = int((lon + 180) / 6) + 1
+
+    return zone
 
 def num_to_letters(n: int) -> str:
     s = ""
@@ -55,7 +65,6 @@ def num_to_letters(n: int) -> str:
         n, r = divmod(n - 1, 26)
         s = chr(65 + r) + s
     return s
-
 
 # ==================== PIPELINE FUNCTIONS ====================
 def dxf_to_shp(dxf_path: Path, out_path: Path):
@@ -84,7 +93,6 @@ def dxf_text_to_gpkg(dxf_path: Path, out_gpkg: Path, layer_name="dxf_textos"):
     print("Textos DXF (TEXT) salvos em GPKG:", out_gpkg)
     return layer
 
-
 def corrigir_e_snap(linhas: QgsVectorLayer, paths):
     res_fix_lines = processing.run("native:fixgeometries", {
         "INPUT": linhas, "OUTPUT": str(paths["linhas_fix"])
@@ -107,7 +115,6 @@ def linhas_para_poligonos(linhas_snap, out_path):
     })
     return QgsVectorLayer(res_poly["OUTPUT"], "lotes_poligonos", "ogr")
 
-
 def corrigir_geometrias(layer_in, out_path):
     res_fix = processing.run("native:fixgeometries", {
         "INPUT": layer_in, "OUTPUT": str(out_path)
@@ -115,7 +122,6 @@ def corrigir_geometrias(layer_in, out_path):
     layer_out = QgsVectorLayer(res_fix["OUTPUT"], "corrigido", "ogr")
     print("Geometrias corrigidas:", layer_out.featureCount())
     return layer_out
-
 
 def buffer_lotes(lotes_fix, out_path):
     res_buffer = processing.run("native:buffer", {
@@ -125,7 +131,6 @@ def buffer_lotes(lotes_fix, out_path):
     buffer_layer = QgsVectorLayer(res_buffer["OUTPUT"], "lotes_buffer", "ogr")
     print("Buffer aplicado:", buffer_layer.featureCount())
     return buffer_layer
-
 
 def dissolve_para_quadras(buffer_layer, out_path):
     res_diss = processing.run("native:dissolve", {
@@ -416,6 +421,13 @@ def atribuir_ruas_e_esquinas_precision(
     Salva em final/final_gpkg.gpkg.
     """
 
+    if not (upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg").exists():
+        lotes = gpd.read_file(upload_dir / "final" / arquivo_final_nome)
+        out = upload_dir / "final" / "final_gpkg.gpkg"
+        lotes.to_file(out, driver="GPKG", encoding="utf-8")
+        print(f"✅ final_gpkg.gpkg gerado com campos Rua e Esquina. Lotes: {len(lotes)}")
+        return
+
     # 1) Carregar dados
     lotes = gpd.read_file(upload_dir / "final" / arquivo_final_nome)
     ruas  = gpd.read_file(upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg")
@@ -520,93 +532,6 @@ def atribuir_ruas_e_esquinas_precision(
     lotes.to_file(out, driver="GPKG", encoding="utf-8")
     print(f"✅ final_gpkg.gpkg gerado com campos Rua e Esquina. Lotes: {len(lotes)}")
     return out
-
-
-def atribuir_ruas_e_esquinas(upload_dir, arquivo_final_nome="final.shp", buffer_rua=5):
-    """
-    Atribui a(s) rua(s) correspondente(s) e detecta se cada lote é de esquina.
-    Cria um arquivo final.gpkg com as colunas adicionais: 'Rua' e 'Esquina'.
-
-    Parâmetros
-    ----------
-    upload_dir : Path
-        Diretório base do processamento (contém 'ruas/' e 'final/').
-    arquivo_final_nome : str
-        Nome do shapefile final gerado antes desta etapa (padrão: 'final.shp').
-    buffer_rua : float
-        Tamanho do buffer em metros aplicado às ruas para detectar contato.
-    """
-    try:
-        print("🏷️ Atribuindo ruas e detectando lotes de esquina...")
-
-        ruas_path = upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg"
-        final_path = upload_dir / "final" / arquivo_final_nome
-        final_gpkg = upload_dir / "final" / "final_gpkg.gpkg"
-
-        if not ruas_path.exists():
-            raise FileNotFoundError(f"Camada de ruas não encontrada: {ruas_path}")
-        if not final_path.exists():
-            raise FileNotFoundError(f"Camada de lotes não encontrada: {final_path}")
-
-        # Carrega camadas
-        gdf_ruas = gpd.read_file(ruas_path)
-        gdf_lotes = gpd.read_file(final_path)
-
-        # Garante que ambas estão no mesmo CRS
-        if not gdf_lotes.crs:
-            print("⚠️ CRS dos lotes indefinido. Definindo como EPSG:31983.")
-            gdf_lotes.set_crs(epsg=31983, inplace=True)
-
-        if not gdf_ruas.crs:
-            print("⚠️ CRS das ruas indefinido. Definindo como EPSG:4326 (padrão OSM).")
-            gdf_ruas.set_crs(epsg=4326, inplace=True)
-
-        # Agora reprojeta corretamente
-        gdf_ruas = gdf_ruas.to_crs(gdf_lotes.crs)
-
-        # Buffer pequeno nas ruas (para garantir contato)
-        gdf_ruas["geometry"] = gdf_ruas.buffer(buffer_rua)
-
-        # Cria índice espacial
-        sindex_ruas = gdf_ruas.sindex
-
-        # Listas para resultados
-        ruas_col = []
-        esquina_col = []
-
-        for _, lote in gdf_lotes.iterrows():
-            # Seleciona ruas próximas (via bounding box)
-            possible_idx = list(sindex_ruas.intersection(lote.geometry.bounds))
-            possiveis = gdf_ruas.iloc[possible_idx]
-
-            # Filtra ruas que realmente tocam o lote
-            ruas_tocadas = possiveis[possiveis.intersects(lote.geometry)]
-
-            # Nomes distintos
-            nomes = sorted(set(r.strip() for r in ruas_tocadas["name"].dropna()))
-
-            # Define campos
-            ruas_col.append(", ".join(nomes) if nomes else None)
-            esquina_col.append(len(nomes) >= 2)
-
-        # Adiciona novas colunas
-        gdf_lotes["Rua"] = ruas_col
-        gdf_lotes["Rua_lista"] = gdf_lotes["Rua"].apply(lambda x: ";".join(x.split(", ")) if isinstance(x, str) and "," in x else x)
-        gdf_lotes["Esquina"] = esquina_col
-
-        # Salva no formato final.gpkg
-        final_dir = upload_dir / "final"
-        final_dir.mkdir(parents=True, exist_ok=True)
-        gdf_lotes.to_file(final_gpkg, driver="GPKG", encoding="utf-8")
-
-        print(f"✅ Atribuição concluída! Arquivo exportado: {final_gpkg}")
-        print(f"   Lotes: {len(gdf_lotes)} | Esquinas detectadas: {sum(esquina_col)}")
-
-        return final_gpkg
-
-    except Exception as e:
-        print(f"⚠️ Erro na atribuição de ruas e detecção de esquinas: {e}")
-        raise
 
 def create_final_gpkg(layer_path: Path) -> Path:
     """

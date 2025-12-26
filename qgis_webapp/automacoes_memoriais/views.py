@@ -101,18 +101,6 @@ def gerar_memoriais(request):
             "mensagem": "Envie um projeto QGIS compactado (.zip).",
         })
 
-    layers_cfg = {
-        "lotes": request.POST.get("layer_lotes", "").strip(),
-        "quadras": request.POST.get("layer_quadras", "").strip(),
-        "ruas": request.POST.get("layer_ruas", "").strip(),
-    }
-
-    if not layers_cfg["lotes"]:
-        return JsonResponse({
-            "status": "erro",
-            "mensagem": "Nome da camada de lotes é obrigatório.",
-        })
-
     # -----------------------------------------------------
     # 📁 Cria diretório do job
     # -----------------------------------------------------
@@ -170,7 +158,6 @@ def gerar_memoriais(request):
             str(script_path),
             str(project_path),
             str(upload_dir),
-            json.dumps(layers_cfg, ensure_ascii=False),
             request.session.session_key,
         ],
         stdout=open(log_path, "a", encoding="utf-8"),

@@ -99,17 +99,16 @@ def get_layer(project: QgsProject, name: str, geom_type=None, required=False):
 # 🚀 MAIN
 # ---------------------------------------------------------
 def main():
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 4:
         print(
-            "Uso: qgis_process.py <project.qgs> <out_dir> <layers_cfg_json> <session_key>",
+            "Uso: qgis_process.py <project.qgs> <out_dir> <session_key>",
             file=sys.stderr,
         )
         sys.exit(1)
 
     project_path = Path(sys.argv[1]).resolve()
     out_dir = Path(sys.argv[2]).resolve()
-    layers_cfg = json.loads(sys.argv[3])
-    session_key = sys.argv[4]
+    session_key = sys.argv[3]
 
     os.chdir(project_path.parent)
 
@@ -129,12 +128,12 @@ def main():
 
         write_progress(out_dir, 5, "🧩 Validando camadas...")
 
-        lotes = get_layer(
-            project,
-            layers_cfg.get("lotes"),
-            QgsWkbTypes.PolygonGeometry,
-            required=True,
-        )
+        # lotes = get_layer(
+        #     project,
+        #     layers_cfg.get("lotes"),
+        #     QgsWkbTypes.PolygonGeometry,
+        #     required=True,
+        # )
 
         # quadras = get_layer(
         #     project,
@@ -143,12 +142,12 @@ def main():
         #     required=False,
         # )
 
-        ruas = get_layer(
-            project,
-            layers_cfg.get("ruas"),
-            QgsWkbTypes.LineGeometry,
-            required=False,
-        )
+        # ruas = get_layer(
+        #     project,
+        #     layers_cfg.get("ruas"),
+        #     QgsWkbTypes.LineGeometry,
+        #     required=False,
+        # )
 
         write_progress(out_dir, 6, "🏗️ Processando lotes e quadras...")
 

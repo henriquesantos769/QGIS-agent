@@ -21,7 +21,8 @@ import shutil
 from qfieldcloud_sdk import sdk
 from dotenv import load_dotenv
 from qgis.core import (
-        QgsVectorLayer
+        QgsVectorLayer,
+        QgsCoordinateReferenceSystem
 )
 from django.contrib.sessions.models import Session
 import time
@@ -95,8 +96,10 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         atualizar_progresso_thread(session_key, 3, "🔧 Convertendo DXF em camadas vetoriais...")
         linhas = dxf_to_shp(dxf_path, paths["linhas"])
 
-        atualizar_progresso_thread(session_key, 4, "🔧 Gerando camada de confrontações...")
-        outros = dxf_text_to_gpkg(dxf_path, paths["outros"], "outros")
+        #crs_all = crs if crs else QgsCoordinateReferenceSystem("EPSG:31983")    
+
+        #atualizar_progresso_thread(session_key, 4, "🔧 Gerando camada de confrontações...")
+        #outros = dxf_text_to_gpkg(dxf_path, paths["outros"], "outros")
 
 
         atualizar_progresso_thread(session_key, 4, "🧩 Corrigindo e aplicando snap...")
@@ -148,6 +151,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         data["aguardando_ruas"] = False
         session.session_data = Session.objects.encode(data)
         session.save()
+
+        #espg = int(crs_all.authid().split(":")[-1]) if crs_all else 31983
 
         atualizar_progresso_thread(session_key, 15, "🏷️ Atribuindo ruas e detectando lotes de esquina...")
         atribuir_ruas_e_esquinas_precision(upload_dir)
