@@ -150,7 +150,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     # --- Carregar camadas vetoriais ---
     camadas = [
         ("final/final_gpkg.gpkg", "Lotes/Quadras - Polígonos"),
-        ("quadras/quadras_m2s.gpkg", "Quadras"),
+        #("quadras/quadras_m2s.gpkg", "Quadras"),
         ("quadras/quadras_rotulo_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
         ("outros/outros.gpkg", "Outros")
@@ -300,7 +300,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 for status, color in color_map.items():
                     symbol = QgsFillSymbol.createSimple({
                         "outline_color": color.name(),
-                        "outline_width": "0.8",
+                        "outline_width": "0.0",
                         "color": "255,255,255,0",
                         "outline_style": "solid",
                     })
@@ -309,7 +309,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 default_symbol = QgsFillSymbol.createSimple({
                     "color": "255,255,255,0",
                     "outline_color": "#EBF400",
-                    "outline_width": "0.5",
+                    "outline_width": "0.0",
                     "outline_style": "solid",
                 })
                 categories.append(QgsRendererCategory(None, default_symbol, "Sem STATUS"))
@@ -447,7 +447,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     # Estilo simples
     symbol = QgsLineSymbol.createSimple({
         "color": "#000000",
-        "width": "0.6"
+        "width": "0.0"
     })
     layer_linhas.setRenderer(QgsSingleSymbolRenderer(symbol))
 
