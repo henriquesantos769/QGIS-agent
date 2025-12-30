@@ -473,7 +473,7 @@ def gerar_confrontacoes(
     sidx_lotes = gdf_lotes.sindex
     sidx_ruas  = gdf_ruas.sindex
 
-    outros_path = upload_dir / "projeto_qgis" / "outros.gpkg"
+    outros_path = upload_dir / "limitante" / "limitante.gpkg"
     gdf_outros = None
     sidx_outros = None
 
@@ -482,7 +482,7 @@ def gerar_confrontacoes(
         gdf_outros["geom_buff"] = gdf_outros.geometry.buffer(buffer_outros)
         sidx_outros = gdf_outros.sindex
     else:
-        outros_path = upload_dir / "outros.gpkg"
+        outros_path = upload_dir / "limitante.gpkg"
         if outros_path.exists():
             gdf_outros = gpd.read_file(outros_path).to_crs(gdf_lotes.crs)
             gdf_outros["geom_buff"] = gdf_outros.geometry.buffer(buffer_outros)
@@ -1237,8 +1237,8 @@ def gerar_memorial_quadra(
     final_path = upload_dir / "final" / arquivo_final_nome
     ruas_path  = upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg"
 
-    outros_path1 = upload_dir / "projeto_qgis" / "outros.gpkg"
-    outros_path2 = upload_dir / "outros.gpkg"
+    outros_path1 = upload_dir / "limitante" / "limitante.gpkg"
+    outros_path2 = upload_dir / "limitante.gpkg"
 
     # --------------------------------------------------
     # Carregar dados

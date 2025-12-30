@@ -34,9 +34,9 @@ from qgis.PyQt.QtGui import QColor, QFont
 from qgis.PyQt.QtCore import QVariant
 import zipfile
 import geopandas as gpd
-from .stylize import (stylize_layer_ruas,
-                        stylize_layer_quadras, stylize_layer_outros,
-                        aplicar_rotulos_lotes_numero_e_area)
+from .stylize import (stylize_layer_ruas, stylize_layer_quadras, stylize_rotulos_area,
+                        stylize_layer_quadras_rotulos, stylize_layer_outros,
+                        stylize_rotulos_lotes)
 import qgis.core as qgs
 import xml.etree.ElementTree as ET
 import copy
@@ -149,11 +149,13 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
     # --- Carregar camadas vetoriais ---
     camadas = [
-        ("final/final_gpkg.gpkg", "Lotes/Quadras - Polígonos"),
-        #("quadras/quadras_m2s.gpkg", "Quadras"),
-        ("quadras/quadras_rotulo_pt.gpkg", "Quadras"),
+        ("final/final_gpkg.gpkg", "Lotes"),
+        ("final/lotes_rotulos.gpkg", "Lotes"),
+        ("final/lotes_area_rotulos.gpkg", "Lotes"),
+        ("quadras/quadras_m2s.gpkg", "Quadras"),
+        ("quadras/quadras_rotulos_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
-        ("outros/outros.gpkg", "Outros")
+        ("limitante/limitante.gpkg", "Limitante")
     ]
 
     final_layer_obj = None
@@ -181,12 +183,18 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         # Estilização básica para camadas não 'final'
         if "ruas" in rel_path.lower():
             stylize_layer_ruas(layer)
+        elif "quadras_rotulos" in rel_path.lower():
+            stylize_layer_quadras_rotulos(layer)
+        elif "limitante" in rel_path.lower():
+            stylize_layer_outros(layer)
         elif "quadras" in rel_path.lower():
             stylize_layer_quadras(layer)
-        elif "outros" in rel_path.lower():
-            stylize_layer_outros(layer)
+        elif "lotes_rotulos" in rel_path.lower():
+            stylize_rotulos_lotes(layer)
+        elif "lotes_area_rotulos" in rel_path.lower():
+            stylize_rotulos_area(layer)
 
-        if "final" in rel_path.lower():
+        if "final_gpkg" in rel_path.lower():
             final_layer_obj = layer
             camada_filtrada = str(camada_path.resolve())
 
@@ -320,7 +328,6 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 print("🎨 Renderer STATUS aplicado após commit (salvo corretamente no projeto).")
 
             # --- 6. Estilo visual adicional (rótulos etc.) ---
-            aplicar_rotulos_lotes_numero_e_area(layer)
             print("🎨 Simbologia e campos aplicados na camada final.")
 
         # --- 5. Propriedades globais QFieldSync e árvore de camadas ---
@@ -428,7 +435,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
     text_format.setSize(10)  # 🔹 tamanho em pt
 
-    text_format.setColor(QColor("#000000"))
+    text_format.setColor(QColor("#ff0008"))
 
     # (opcional) buffer branco pra legibilidade
     buffer = QgsTextBufferSettings()

@@ -12,7 +12,8 @@ from .pipeline import (
     dxf_to_shp, corrigir_e_snap, linhas_para_poligonos, dissolve_para_quadras,
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
-    converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, dxf_text_to_gpkg
+    converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, criar_camada_linhas,
+    gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -84,10 +85,12 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "quadras_raw": upload_dir / "quadras" / "quadras_dissolve.shp",
             "quadras_single": upload_dir / "quadras" / "quadras.shp",
             "quadras_single2": upload_dir / "quadras" / "quadras_m2s.gpkg",
-            "quadras_pts": upload_dir / "quadras" / "quadras_rotulo_pt.gpkg",
+            "quadras_pts": upload_dir / "quadras" / "quadras_rotulos_pt.gpkg",
             "lotes_join": upload_dir / "lotes_poligonos" / "lotes_com_quadra.shp",
             "arquivo_final": upload_dir / "final" / "final.shp",
-            "outros": upload_dir / "outros" / "outros.gpkg"
+            "limitante": upload_dir / "limitante" / "limitante.gpkg",
+            "lotes_rotulos" : upload_dir / "final" / "lotes_rotulos.gpkg",
+            "area_rotulos": upload_dir / "final" / "lotes_area_rotulos.gpkg"
         }
 
         for p in paths.values():
@@ -96,11 +99,17 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         atualizar_progresso_thread(session_key, 3, "🔧 Convertendo DXF em camadas vetoriais...")
         linhas = dxf_to_shp(dxf_path, paths["linhas"])
 
-        #crs_all = crs if crs else QgsCoordinateReferenceSystem("EPSG:31983")    
+        fuso, crs_int = detectar_fuso_utm(dxf_path)
+        crs_str = f"EPSG:{crs_int}"
+        crs_all = QgsCoordinateReferenceSystem(crs_str)
+        print("CRS DETECTADO:", crs_str, "Fuso UTM:", fuso)
 
         #atualizar_progresso_thread(session_key, 4, "🔧 Gerando camada de confrontações...")
-        #outros = dxf_text_to_gpkg(dxf_path, paths["outros"], "outros")
-
+        outros = criar_camada_linhas(
+            file_path=paths["limitante"],
+            crs_epsg=crs_str,
+            layer_name="Limites do Lote"
+        )
 
         atualizar_progresso_thread(session_key, 4, "🧩 Corrigindo e aplicando snap...")
         linhas_fix = corrigir_e_snap(linhas, paths)
@@ -130,11 +139,13 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         lotes_join = join_lotes_quadras(lotes_fix, quadras, paths["lotes_join"])
 
         atualizar_progresso_thread(session_key, 13, "🧩 Numerando lotes...")
-        numerar_lotes(lotes_join, paths["arquivo_final"])
+        lotes_join = numerar_lotes(lotes_join, paths["arquivo_final"])
+        gerar_pontos_rotulo_lotes(lotes_join, paths["lotes_rotulos"])
+        gerar_pontos_area_lotes(lotes_join, paths["area_rotulos"])
 
         atualizar_progresso_thread(session_key, 14, "🧩 Extraindo ruas do OpenStreetMap...")
         try:
-            extrair_ruas_overpass(quadras, upload_dir)
+            extrair_ruas_overpass(quadras, upload_dir, DEFAULT_CRS=crs_str)
         except RuntimeError as e:
             atualizar_progresso_thread(session_key, 98, f"⚠️ Falha no Overpass API: {e}")
             # Salva flag "aguardando_ruas" diretamente na sessão
@@ -152,13 +163,11 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         session.session_data = Session.objects.encode(data)
         session.save()
 
-        #espg = int(crs_all.authid().split(":")[-1]) if crs_all else 31983
-
         atualizar_progresso_thread(session_key, 15, "🏷️ Atribuindo ruas e detectando lotes de esquina...")
-        atribuir_ruas_e_esquinas_precision(upload_dir)
+        atribuir_ruas_e_esquinas_precision(upload_dir, epsg_lotes=crs_int)
 
         atualizar_progresso_thread(session_key, 16, "🗺️ Criando projeto QGIS final...")
-        create_final_project(upload_dir, ortho_path=ortho_path)
+        create_final_project(upload_dir, ortho_path=ortho_path, DEFAULT_CRS=crs_str)
 
         atualizar_progresso_thread(session_key, 17, "✅ Projeto QGIS criado com sucesso!")
 
@@ -315,7 +324,7 @@ def download_pacote_zip(request):
         return HttpResponse("Projeto QGIS não encontrado. Gere o projeto antes.")
 
     export_folder = upload_dir / "qfield_export"
-    include_data_folders = ["final", "ruas", "quadras", "ortofoto", "outros"]
+    include_data_folders = ["final", "ruas", "quadras", "ortofoto", "limitante"]
 
     try:
         package_project_for_qfield(

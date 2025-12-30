@@ -1,7 +1,7 @@
 from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes
+    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes, QgsSpatialIndex
 )
 from qgis.PyQt.QtCore import QVariant
 from qgis.analysis import QgsNativeAlgorithms
@@ -48,16 +48,42 @@ def save_layer(layer: QgsVectorLayer, file_path: Path, driver="ESRI Shapefile", 
         raise RuntimeError(f"Falha ao salvar '{file_path}': {msg}")
     return file_path
 
-def inferir_utm_zone(layer):
-    extent = layer.extent()
-    x = extent.center().x()
-    y = extent.center().y()
+def detectar_fuso_utm(path_dxf: str):
+    MAPA_SIRGAS = {
+        21: 31981,
+        22: 31982,
+        23: 31983,
+        24: 31984,  # 🌍 Seu caso
+        25: 31985
+    }
 
-    # longitude aproximada
-    lon = (x - 500000) / 111320  # heurística grosseira
-    zone = int((lon + 180) / 6) + 1
+    gdf = gpd.read_file(path_dxf)
+    if gdf.empty:
+        raise Exception("DXF sem geometrias.")
 
-    return zone
+    resultados = []
+    for zona in [22, 23, 24, 25]:
+        epsg = 32700 + zona  # WGS84 / UTM zona S
+        try:
+            gdf_tmp = gdf.set_crs(epsg=epsg).to_crs(4326)
+            c = gdf_tmp.geometry.unary_union.centroid
+            resultados.append((zona, epsg, c.x, c.y))
+        except Exception as e:
+            resultados.append((zona, epsg, str(e), None))
+
+    for zona, epsg, lon, lat in resultados:
+        print(f"Zona {zona} → EPSG:{epsg} → lon={lon}, lat={lat}")
+
+    # escolha a zona onde lon está entre -75 e -30 (Brasil)
+    zona_ok = min(
+        [r for r in resultados if isinstance(r[2], (int, float, float))],
+        key=lambda r: abs(r[2] + 39)  # aproxima de -39° (Bahia)
+    )
+
+    fuso_detectado = zona_ok[0]           
+    epsg_sirgas = MAPA_SIRGAS[fuso_detectado]
+
+    return fuso_detectado, epsg_sirgas
 
 def num_to_letters(n: int) -> str:
     s = ""
@@ -92,6 +118,137 @@ def dxf_text_to_gpkg(dxf_path: Path, out_gpkg: Path, layer_name="dxf_textos"):
 
     print("Textos DXF (TEXT) salvos em GPKG:", out_gpkg)
     return layer
+
+def gerar_pontos_area_lotes(lotes_layer: QgsVectorLayer, out_path: Path):
+    """
+    Cria uma camada de pontos (centro dos lotes)
+    contendo a área REAL do polígono correspondente.
+    """
+
+    if not lotes_layer or not lotes_layer.isValid():
+        raise ValueError("Camada de lotes inválida.")
+
+    # --------------------------------------------------
+    # 1) Gera pontos internos
+    # --------------------------------------------------
+    pts = processing.run(
+        "qgis:pointonsurface",
+        {
+            "INPUT": lotes_layer,
+            "ALL_PARTS": False,
+            "OUTPUT": "memory:"
+        }
+    )["OUTPUT"]
+
+    # --------------------------------------------------
+    # 2) Adiciona campo de área
+    # --------------------------------------------------
+    pr = pts.dataProvider()
+    if "area_m2" not in [f.name() for f in pts.fields()]:
+        pr.addAttributes([QgsField("area_m2", QVariant.Double)])
+        pts.updateFields()
+
+    idx_area = pts.fields().indexOf("area_m2")
+
+    # --------------------------------------------------
+    # 3) Criar índice espacial dos polígonos
+    # --------------------------------------------------
+    lotes_index = QgsSpatialIndex(lotes_layer.getFeatures())
+
+    # --------------------------------------------------
+    # 4) Transferir área correta do polígono
+    # --------------------------------------------------
+    pts.startEditing()
+
+    for p in pts.getFeatures():
+        geom_p = p.geometry()
+
+        # busca candidatos
+        candidatos = lotes_index.intersects(geom_p.boundingBox())
+
+        area = 0.0
+        for fid in candidatos:
+            feat = lotes_layer.getFeature(fid)
+            if feat.geometry().contains(geom_p):
+                area = feat.geometry().area()
+                break
+
+        pts.changeAttributeValue(p.id(), idx_area, area)
+
+    pts.commitChanges()
+
+    # --------------------------------------------------
+    # 5) Salvar camada
+    # --------------------------------------------------
+    save_layer(
+        pts,
+        file_path=out_path,
+        driver="GPKG",
+        layer_name="lotes_rotulo_area"
+    )
+
+    print(f"✅ Camada de rótulos de área criada: {out_path}")
+    return pts
+
+def criar_camada_linhas(
+    file_path,
+    crs_epsg="EPSG:31983",
+    layer_name="limites_lotes"
+):
+    """
+    Cria uma camada LineString com:
+    - id (auto incremental)
+    - name (texto)
+
+    Salva no caminho informado via save_layer().
+    """
+
+    # --------------------------------------------------
+    # 1) Criar camada temporária em memória
+    # --------------------------------------------------
+    layer = QgsVectorLayer(
+        f"LineString?crs={crs_epsg}",
+        layer_name,
+        "memory"
+    )
+
+    if not layer.isValid():
+        raise RuntimeError("❌ Falha ao criar camada de linhas.")
+
+    provider = layer.dataProvider()
+
+    # --------------------------------------------------
+    # 2) Campos
+    # --------------------------------------------------
+    provider.addAttributes([
+        QgsField("name", QVariant.String),
+    ])
+    layer.updateFields()
+
+    # --------------------------------------------------
+    # 3) Gerador automático de ID
+    # --------------------------------------------------
+    layer.startEditing()
+    for i, f in enumerate(layer.getFeatures(), start=1):
+        f["id"] = i
+        layer.updateFeature(f)
+    layer.commitChanges()
+
+    # --------------------------------------------------
+    # 4) Salvar usando sua função
+    # --------------------------------------------------
+    save_layer(layer, file_path, driver="GPKG", layer_name=layer_name)
+
+    # --------------------------------------------------
+    # 5) Recarregar camada salva
+    # --------------------------------------------------
+    final_layer = QgsVectorLayer(str(file_path), layer_name, "ogr")
+    if not final_layer.isValid():
+        raise RuntimeError("❌ Camada salva mas não pôde ser recarregada.")
+
+    QgsProject.instance().addMapLayer(final_layer)
+
+    return final_layer
 
 def corrigir_e_snap(linhas: QgsVectorLayer, paths):
     res_fix_lines = processing.run("native:fixgeometries", {
@@ -269,13 +426,71 @@ def numerar_lotes(lotes_join: QgsVectorLayer, out_path: Path):
     print("📌 Numeração dos lotes concluída (ângulo polar):", out_path)
     return lotes_join
 
+def gerar_pontos_rotulo_lotes(lotes_layer: QgsVectorLayer, out_path: Path):
+    """
+    Gera uma camada de pontos (um por lote) para rótulos,
+    usando pointOnSurface (garantido dentro do polígono).
+    """
 
-def extrair_ruas_overpass(quadras, out_dir):
+    if not lotes_layer or not lotes_layer.isValid():
+        raise ValueError("Camada de lotes inválida.")
+
+    # --------------------------------------------------
+    # 1) Gerar pontos internos (point on surface)
+    # --------------------------------------------------
+    res = processing.run(
+        "qgis:pointonsurface",
+        {
+            "INPUT": lotes_layer,
+            "ALL_PARTS": False,
+            "OUTPUT": "memory:"
+        }
+    )
+
+    pontos = res["OUTPUT"]
+
+    # --------------------------------------------------
+    # 2) Garantir campo 'lote_num'
+    # --------------------------------------------------
+    pr = pontos.dataProvider()
+    fields = [f.name() for f in pontos.fields()]
+
+    if "lote_num" not in fields:
+        pr.addAttributes([QgsField("lote_num", QVariant.Int)])
+        pontos.updateFields()
+
+    idx_lote = pontos.fields().indexOf("lote_num")
+
+    # --------------------------------------------------
+    # 3) Copiar valor do lote original
+    # --------------------------------------------------
+    pontos.startEditing()
+
+    # cria dicionário id → lote_num
+    mapa_lotes = {}
+    for f in lotes_layer.getFeatures():
+        mapa_lotes[f.id()] = f["lote_num"]
+
+    for f in pontos.getFeatures():
+        if f.id() in mapa_lotes:
+            pontos.changeAttributeValue(f.id(), idx_lote, mapa_lotes[f.id()])
+
+    pontos.commitChanges()
+
+    # --------------------------------------------------
+    # 4) Salvar camada
+    # --------------------------------------------------
+    save_layer(pontos, driver="GPKG", layer_name="lotes_rotulos", file_path=out_path)
+
+    print(f"✅ Camada de rótulos de lotes criada: {out_path}")
+
+    return pontos
+
+def extrair_ruas_overpass(quadras, out_dir, DEFAULT_CRS="EPSG:31983"):
     print("🌐 Baixando ruas do OSM com base no polígono das quadras...")
 
     if not quadras.crs().isValid():
-        quadras.setCrs(QgsCoordinateReferenceSystem("EPSG:31983"))
-
+        quadras.setCrs(QgsCoordinateReferenceSystem(DEFAULT_CRS))
     crs_src = quadras.crs()
     crs_dest = QgsCoordinateReferenceSystem("EPSG:4326")
     transformer = QgsCoordinateTransform(crs_src, crs_dest, QgsProject.instance().transformContext())
