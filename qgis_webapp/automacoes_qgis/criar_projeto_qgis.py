@@ -152,7 +152,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         ("final/final_gpkg.gpkg", "Lotes"),
         ("final/lotes_rotulos.gpkg", "Lotes"),
         ("final/lotes_area_rotulos.gpkg", "Lotes"),
-        ("quadras/quadras_m2s.gpkg", "Quadras"),
+        ("quadras/quadras_dissolve.gpkg", "Quadras"),
         ("quadras/quadras_rotulos_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
         ("limitante/limitante.gpkg", "Limitante")
@@ -417,7 +417,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
     # Rótulos = comprimento do segmento (2 casas)
     settings = QgsPalLayerSettings()
-    settings.fieldName = "format_number(length($geometry), 2) || ' m'"
+    settings.fieldName = "format_number(length($geometry), 2)"
     settings.isExpression = True
     settings.placement = QgsPalLayerSettings.Line
 

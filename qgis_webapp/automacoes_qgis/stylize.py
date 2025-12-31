@@ -12,71 +12,93 @@ from qgis.core import (
     QgsSingleSymbolRenderer,
     QgsRuleBasedLabeling,
     Qgis,
-    QgsFillSymbol
+    QgsFillSymbol,
+    QgsProperty
 )
 from PyQt5.QtGui import QColor, QFont
 
 def stylize_rotulos_lotes(layer):
-    settings = QgsPalLayerSettings()
-    settings.isExpression = False
-    settings.fieldName = "lote_num"
-    settings.placement = Qgis.LabelPlacement.OverPoint
-    settings.centroidInside = True
-    settings.allowOverlap = True
+    """
+    Rótulo do número do lote:
+    - Fica fora do centro
+    - Não colide com a área
+    - Sempre visível
+    """
 
-    text_format = QgsTextFormat()
-    text_format.setFont(QFont("Arial", 13, QFont.Bold))
-    text_format.setColor(QColor("#092DDC"))
+    if not layer or not layer.isValid():
+        print("❌ Camada inválida.")
+        return
+
+    settings = QgsPalLayerSettings()
+    settings.isExpression = True
+    settings.fieldName = '"lote_num"'
+
+    # 🔥 ESSENCIAL: fora do centro
+    settings.placement = Qgis.LabelPlacement.AroundPoint
+    settings.centroidInside = False
+    settings.allowOverlap = True
+    settings.obstacle = False
+    settings.zIndex = 10
+
+    # 🔹 Distância do centro (em mm na tela)
+    settings.dist = 4.0
+
+    # 🔹 Preferência lateral (direita)
+    settings.quadrant = QgsPalLayerSettings.QuadrantRight
+
+    # ----------------------------
+    # Estilo
+    # ----------------------------
+    text = QgsTextFormat()
+    text.setFont(QFont("Arial", 13, QFont.Bold))
+    text.setColor(QColor("#092DDC"))
 
     buffer = QgsTextBufferSettings()
     buffer.setEnabled(True)
-    buffer.setColor(QColor("#FFFFFF"))
+    buffer.setColor(QColor("white"))
     buffer.setSize(1.2)
-    text_format.setBuffer(buffer)
 
-    settings.setFormat(text_format)
+    text.setBuffer(buffer)
+    settings.setFormat(text)
 
     layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
     layer.setLabelsEnabled(True)
     layer.triggerRepaint()
 
+    print("✅ Rótulos de número posicionados fora do centro.")
+
 def stylize_rotulos_area(layer):
     if not layer or not layer.isValid():
-        print("❌ Camada inválida para rótulos de área.")
+        print("❌ Camada inválida.")
         return
 
     settings = QgsPalLayerSettings()
     settings.isExpression = True
-    settings.fieldName = "format_number(\"area_m2\", 2) || ' m²'"
+    settings.fieldName = 'format_number("area_m2", 2) || \' m²\''
 
-    # Centralizado dentro do polígono
     settings.placement = Qgis.LabelPlacement.OverPoint
     settings.centroidInside = True
-
-    # Pequeno deslocamento para baixo
-    settings.yOffset = -4.0
-
     settings.allowOverlap = True
-    settings.displayAll = True
+    settings.obstacle = False
+    settings.zIndex = 5
 
-    text_format = QgsTextFormat()
-    text_format.setFont(QFont("Arial", 9))
-    text_format.setColor(QColor("#4A90E2"))
+    text = QgsTextFormat()
+    text.setFont(QFont("Arial", 9))
+    text.setColor(QColor("#4A90E2"))
 
     buffer = QgsTextBufferSettings()
     buffer.setEnabled(True)
+    buffer.setColor(QColor("white"))
     buffer.setSize(1.1)
-    buffer.setColor(QColor("#FFFFFF"))
-    text_format.setBuffer(buffer)
 
-    settings.setFormat(text_format)
+    text.setBuffer(buffer)
+    settings.setFormat(text)
 
-    labeling = QgsRuleBasedLabeling(QgsRuleBasedLabeling.Rule(settings))
-    layer.setLabeling(labeling)
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
     layer.setLabelsEnabled(True)
     layer.triggerRepaint()
 
-    print("✨ Rótulos de área aplicados com sucesso.")
+    print("✅ Rótulos de área centralizados.")
 
 def stylize_layer_ruas(layer):
     """
@@ -189,7 +211,7 @@ def stylize_layer_quadras(layer):
     symbol = QgsFillSymbol.createSimple({
         "color": "0,0,0,0",           # totalmente transparente
         "outline_color": "#FFF700",   # amarelo
-        "outline_width": "0.4",
+        "outline_width": "0.0",
         "outline_style": "solid"
     })
 

@@ -82,6 +82,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "lotes_poly": upload_dir / "lotes_poligonos" / "lotes_poligonos.shp",
             "lotes_fix": upload_dir / "lotes_poligonos" / "lotes_poligonos_fix.shp",
             "lotes_buffer": upload_dir / "lotes_poligonos" / "lotes_buffer.shp",
+            "quadras_dissolve_gpkg": upload_dir / "quadras" / "quadras_dissolve.gpkg",
             "quadras_raw": upload_dir / "quadras" / "quadras_dissolve.shp",
             "quadras_single": upload_dir / "quadras" / "quadras.shp",
             "quadras_single2": upload_dir / "quadras" / "quadras_m2s.gpkg",
@@ -90,6 +91,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "arquivo_final": upload_dir / "final" / "final.shp",
             "limitante": upload_dir / "limitante" / "limitante.gpkg",
             "lotes_rotulos" : upload_dir / "final" / "lotes_rotulos.gpkg",
+            "final_gpkg": upload_dir / "final" / "final_gpkg.gpkg",
             "area_rotulos": upload_dir / "final" / "lotes_area_rotulos.gpkg"
         }
 
@@ -120,6 +122,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         atualizar_progresso_thread(session_key, 6, "🧼 Corrigindo geometrias dos lotes...")
         lotes_fix = corrigir_geometrias(lotes_poly, paths["lotes_fix"])
 
+        quadras_dissolve = dissolve_para_quadras(lotes_fix, paths["quadras_dissolve_gpkg"])
+
         atualizar_progresso_thread(session_key, 7, "🗂️ Gerando buffers dos lotes...")
         lotes_buffer = buffer_lotes(lotes_fix, paths["lotes_buffer"])
 
@@ -140,7 +144,6 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
 
         atualizar_progresso_thread(session_key, 13, "🧩 Numerando lotes...")
         lotes_join = numerar_lotes(lotes_join, paths["arquivo_final"])
-        gerar_pontos_rotulo_lotes(lotes_join, paths["lotes_rotulos"])
         gerar_pontos_area_lotes(lotes_join, paths["area_rotulos"])
 
         atualizar_progresso_thread(session_key, 14, "🧩 Extraindo ruas do OpenStreetMap...")
@@ -165,6 +168,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
 
         atualizar_progresso_thread(session_key, 15, "🏷️ Atribuindo ruas e detectando lotes de esquina...")
         atribuir_ruas_e_esquinas_precision(upload_dir, epsg_lotes=crs_int)
+        gerar_pontos_rotulo_lotes(paths['final_gpkg'], paths["lotes_rotulos"])
 
         atualizar_progresso_thread(session_key, 16, "🗺️ Criando projeto QGIS final...")
         create_final_project(upload_dir, ortho_path=ortho_path, DEFAULT_CRS=crs_str)

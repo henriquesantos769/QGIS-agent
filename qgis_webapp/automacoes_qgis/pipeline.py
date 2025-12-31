@@ -426,17 +426,26 @@ def numerar_lotes(lotes_join: QgsVectorLayer, out_path: Path):
     print("📌 Numeração dos lotes concluída (ângulo polar):", out_path)
     return lotes_join
 
-def gerar_pontos_rotulo_lotes(lotes_layer: QgsVectorLayer, out_path: Path):
+def gerar_pontos_rotulo_lotes(lotes_path: Path, out_path: Path):
     """
-    Gera uma camada de pontos (um por lote) para rótulos,
+    Cria uma camada de pontos (um por lote) para rótulos,
     usando pointOnSurface (garantido dentro do polígono).
-    """
 
-    if not lotes_layer or not lotes_layer.isValid():
-        raise ValueError("Camada de lotes inválida.")
+    Parâmetros:
+    - lotes_path: caminho do arquivo dos lotes (ex: final_gpkg.gpkg)
+    - out_path: caminho de saída da camada de rótulos
+    """
 
     # --------------------------------------------------
-    # 1) Gerar pontos internos (point on surface)
+    # 1) Carrega camada de lotes
+    # --------------------------------------------------
+    lotes_layer = QgsVectorLayer(str(lotes_path), "lotes_base", "ogr")
+
+    if not lotes_layer.isValid():
+        raise ValueError(f"❌ Camada inválida: {lotes_path}")
+
+    # --------------------------------------------------
+    # 2) Gerar pontos internos (point on surface)
     # --------------------------------------------------
     res = processing.run(
         "qgis:pointonsurface",
@@ -450,7 +459,7 @@ def gerar_pontos_rotulo_lotes(lotes_layer: QgsVectorLayer, out_path: Path):
     pontos = res["OUTPUT"]
 
     # --------------------------------------------------
-    # 2) Garantir campo 'lote_num'
+    # 3) Garantir campo 'lote_num'
     # --------------------------------------------------
     pr = pontos.dataProvider()
     fields = [f.name() for f in pontos.fields()]
@@ -462,14 +471,15 @@ def gerar_pontos_rotulo_lotes(lotes_layer: QgsVectorLayer, out_path: Path):
     idx_lote = pontos.fields().indexOf("lote_num")
 
     # --------------------------------------------------
-    # 3) Copiar valor do lote original
+    # 4) Copiar valor do lote original
     # --------------------------------------------------
     pontos.startEditing()
 
-    # cria dicionário id → lote_num
-    mapa_lotes = {}
-    for f in lotes_layer.getFeatures():
-        mapa_lotes[f.id()] = f["lote_num"]
+    # mapa id_feature → lote_num
+    mapa_lotes = {
+        f.id(): f["lote_num"]
+        for f in lotes_layer.getFeatures()
+    }
 
     for f in pontos.getFeatures():
         if f.id() in mapa_lotes:
@@ -478,11 +488,16 @@ def gerar_pontos_rotulo_lotes(lotes_layer: QgsVectorLayer, out_path: Path):
     pontos.commitChanges()
 
     # --------------------------------------------------
-    # 4) Salvar camada
+    # 5) Salvar camada
     # --------------------------------------------------
-    save_layer(pontos, driver="GPKG", layer_name="lotes_rotulos", file_path=out_path)
+    save_layer(
+        layer=pontos,
+        file_path=out_path,
+        driver="GPKG",
+        layer_name="lotes_rotulos"
+    )
 
-    print(f"✅ Camada de rótulos de lotes criada: {out_path}")
+    print(f"✅ Camada de rótulos criada com sucesso: {out_path}")
 
     return pontos
 

@@ -167,7 +167,7 @@ def atribuir_ruas_e_esquinas_precision(
     return out
 
 
-def atribuir_ruas_e_esquinas(upload_dir, arquivo_final_nome="final.shp", buffer_rua=5):
+def atribuir_ruas_e_esquinas(upload_dir, arquivo_final_nome="final.shp", buffer_rua=12):
     """
     Atribui a(s) rua(s) correspondente(s) e detecta se cada lote é de esquina.
     Cria um arquivo final.gpkg com as colunas adicionais: 'Rua' e 'Esquina'.
@@ -291,8 +291,9 @@ def create_final_gpkg(layer_path: Path) -> Path:
 
 def atribuir_ruas_frente(upload_dir,
                          arquivo_final_nome="final.shp",
-                         buffer_rua=8,
-                         min_testada=1.0):
+                         buffer_rua=12,
+                         min_testada=1.0,
+                         crs_epsg=31983):
     """
     Atribui às geometrias de lote:
       - Rua: todas as ruas tocantes (string)
@@ -322,7 +323,7 @@ def atribuir_ruas_frente(upload_dir,
     # 2) Garantir CRS
     # ====================
     if not gdf_lotes.crs:
-        gdf_lotes.set_crs(epsg=31983, inplace=True)
+        gdf_lotes.set_crs(epsg=crs_epsg, inplace=True)
 
     if not gdf_ruas.crs:
         gdf_ruas.set_crs(epsg=4326, inplace=True)
@@ -426,10 +427,10 @@ def atribuir_ruas_frente(upload_dir,
 def gerar_confrontacoes(
     upload_dir,
     arquivo_final_nome="final_gpkg.gpkg",
-    buffer_rua=8,
+    buffer_rua=12,
     buffer_outros=7,
     epsg_lotes=31983,
-    campo_nome_outros="nome"
+    campo_nome_outros="name"
 ):
     import math
     import geopandas as gpd
@@ -478,6 +479,7 @@ def gerar_confrontacoes(
     sidx_outros = None
 
     if outros_path.exists():
+        print("OUTROS PATH EXISTE")
         gdf_outros = gpd.read_file(outros_path).to_crs(gdf_lotes.crs)
         gdf_outros["geom_buff"] = gdf_outros.geometry.buffer(buffer_outros)
         sidx_outros = gdf_outros.sindex
@@ -1116,7 +1118,7 @@ def _memorial_lote_completo(
         # 3) outros
         if gdf_outros is not None and "geom_buff" in gdf_outros.columns:
             for _, outro in gdf_outros.iterrows():
-                nome_outro = outro.get("nome")
+                nome_outro = outro.get("name")
                 if not isinstance(nome_outro, str) or not nome_outro.strip():
                     continue
                 inter = outro["geom_buff"].intersection(ln)
@@ -1229,6 +1231,7 @@ def gerar_memorial_quadra(
     promotor: str = "Instituto Cidade Legal",
     saida_dir: Path | None = None,
     buffer_outros: float = 7.0,
+    buffer_rua: float = 12.0
 ):
 
     # --------------------------------------------------
@@ -1248,7 +1251,7 @@ def gerar_memorial_quadra(
 
     # buffer das ruas (necessário para o memorial por segmento)
     if "geom_buff" not in gdf_ruas.columns:
-        gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(7)
+        gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(buffer_rua)
 
     # OUTROS (opcional)
     gdf_outros = None

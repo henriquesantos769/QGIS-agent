@@ -123,9 +123,13 @@ def main():
         project = QgsProject.instance()
         project.clear()
 
+
         if not project.read(str(project_path)):
             raise RuntimeError("Falha ao abrir o projeto QGIS")
 
+        crs = project.crs().authid()
+        print(f"CRS do projeto: {crs}")
+        
         write_progress(out_dir, 5, "🧩 Validando camadas...")
 
         # lotes = get_layer(
@@ -160,13 +164,13 @@ def main():
         # )
 
         write_progress(out_dir, 10, "🏷️ Atribuindo ruas e esquinas...")
-        atribuir_ruas_frente(out_dir)
+        atribuir_ruas_frente(out_dir, crs_epsg=int(crs.split(":")[1]))
 
         write_progress(out_dir, 12, "📐 Gerando confrontações...")
-        gerar_confrontacoes(out_dir)
+        gerar_confrontacoes(out_dir, epsg_lotes=int(crs.split(":")[1]))
 
         write_progress(out_dir, 14, "📏 Calculando medidas e azimutes...")
-        calcular_medidas_e_azimutes(out_dir)
+        calcular_medidas_e_azimutes(out_dir, epsg_lotes=int(crs.split(":")[1]))
 
         write_progress(out_dir, 16, "📝 Gerando memoriais dos lotes...")
         gerar_memoriais_em_lote(out_dir)
