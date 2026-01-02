@@ -25,6 +25,7 @@ from pipeline import (
     calcular_medidas_e_azimutes,
     gerar_memoriais_em_lote,
     gerar_memorial_quadras_docx,
+    obter_fuso_por_epsg
 )
 
 
@@ -128,6 +129,7 @@ def main():
             raise RuntimeError("Falha ao abrir o projeto QGIS")
 
         crs = project.crs().authid()
+        fuso = obter_fuso_por_epsg(project.crs())
         print(f"CRS do projeto: {crs}")
         
         write_progress(out_dir, 5, "🧩 Validando camadas...")
@@ -176,7 +178,7 @@ def main():
         gerar_memoriais_em_lote(out_dir)
 
         write_progress(out_dir, 18, "📝 Gerando memoriais das quadras...")
-        #gerar_memorial_quadras_docx(out_dir)
+        #gerar_memorial_quadras_docx(out_dir, fuso=fuso)
 
         write_progress(out_dir, 20, "✅ Processamento concluído com sucesso")
 

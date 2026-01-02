@@ -27,6 +27,27 @@ import os
 Processing.initialize()
 QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
 
+def obter_fuso_por_epsg(crs):
+    auth = crs.authid()  # ex: "EPSG:31983"
+    if not auth.startswith("EPSG:"):
+        return None
+
+    epsg = int(auth.split(":")[1])
+
+    # SIRGAS 2000 (319xx)
+    if 31900 <= epsg <= 31999:
+        return epsg - 31960  # funciona para o Brasil
+
+    # WGS84 Sul (327xx)
+    if 32700 <= epsg <= 32799:
+        return epsg - 32700
+
+    # WGS84 Norte (326xx)
+    if 32600 <= epsg <= 32699:
+        return epsg - 32600
+
+    return None
+
 def _bearing_of_segment(line, ref_pt):
     # pega o segmento mais próximo do ponto de referência e calcula o azimute
     coords = list(line.coords)
@@ -428,7 +449,7 @@ def gerar_confrontacoes(
     upload_dir,
     arquivo_final_nome="final_gpkg.gpkg",
     buffer_rua=12,
-    buffer_outros=7,
+    buffer_outros=3,
     epsg_lotes=31983,
     campo_nome_outros="name"
 ):
@@ -1230,7 +1251,7 @@ def gerar_memorial_quadra(
     uf: str,
     promotor: str = "Instituto Cidade Legal",
     saida_dir: Path | None = None,
-    buffer_outros: float = 7.0,
+    buffer_outros: float = 3.0,
     buffer_rua: float = 12.0
 ):
 
@@ -1478,7 +1499,9 @@ def segmentar_quadra_com_confrontantes(
     quadras_gpkg: str = "quadras_contorno.gpkg",
     lotes_gpkg: str = "final_medidas_azimutes.gpkg",
     ruas_gpkg: str = "ruas_osm_detalhadas.gpkg",
-    buffer_rua: float = 9.0
+    outros_gpkg: str = "limitante.gpkg",
+    buffer_rua: float = 9.0,
+    buffer_outros: float = 3.0
 ):
     """
     Segmenta cada quadra em trechos individuais e determina
@@ -1497,19 +1520,29 @@ def segmentar_quadra_com_confrontantes(
     quadras_path = upload_dir / "final" / quadras_gpkg
     lotes_path   = upload_dir / "final" / lotes_gpkg
     ruas_path    = upload_dir / "ruas" / ruas_gpkg
+    outros_path  = upload_dir / "limitante" / outros_gpkg
+
 
     gdf_quadras = gpd.read_file(quadras_path)
     gdf_lotes   = gpd.read_file(lotes_path)
     gdf_ruas    = gpd.read_file(ruas_path)
+    gdf_outros  = gpd.read_file(outros_path)
 
     crs = gdf_quadras.crs
     gdf_lotes = gdf_lotes.to_crs(crs)
     gdf_ruas  = gdf_ruas.to_crs(crs)
+    gdf_outros = gdf_outros.to_crs(crs)
 
     # buffer das ruas para facilitar interseção
     gdf_ruas["geom_buff"] = gdf_ruas.geometry.buffer(buffer_rua)
     sidx_ruas  = gdf_ruas.sindex
-    sidx_lotes = gdf_lotes.sindex
+
+    # buffer dos outros limitantes
+    gdf_outros["geom_buff"] = gdf_outros.geometry.buffer(buffer_outros)
+    sidx_outros = gdf_outros.sindex
+
+    MIN_CONTATO_RUA = 1.0  # metros mínimos de contato absoluto
+    MIN_FRAC_RUA    = 0.30 # fração mínima do segmento
 
     registros = []
 
@@ -1551,32 +1584,62 @@ def segmentar_quadra_com_confrontantes(
             line = seg["geometry"]
 
             # — Rua?
-            rua_nome = None
+            melhor_nome = None
+            melhor_score = 0.0
             bbox = list(sidx_ruas.intersection(line.bounds))
 
             for idx_r in bbox:
                 rr = gdf_ruas.iloc[idx_r]
-                if rr["geom_buff"].intersects(line):
-                    if rr.get("name"):
-                        rua_nome = rr["name"]
-                        break
+                inter = rr["geom_buff"].intersection(line)
+                if inter.is_empty:
+                    continue
+                if inter.geom_type not in ("LineString", "MultiLineString"):
+                    continue
+                L = inter.length
 
-            # — Lote?
-            lote_conf = None
-            if rua_nome is None:
-                bbox2 = list(sidx_lotes.intersection(line.bounds))
-                for idx_l in bbox2:
-                    lote = gdf_lotes.iloc[idx_l]
-                    if lote.geometry.intersects(line):
-                        lote_conf = f"Lote {lote.get('lote_num')} - Quadra {lote.get('quadra')}"
-                        break
+                # regra híbrida: absoluto OU relativo (para segmentos < 1m)
+                if L >= MIN_CONTATO_RUA and (L / seg["comprimento"]) >= MIN_FRAC_RUA and L > melhor_score:
+                    melhor_score = L
+                    melhor_nome = rr.get("name")
+            
+            # — Outro limitante?
+            melhor_limitante = None
+            melhor_score_lim = 0.0
 
-            if rua_nome:
+            bbox2 = list(sidx_outros.intersection(line.bounds))
+
+            for idx_o in bbox2:
+                oo = gdf_outros.iloc[idx_o]
+                inter = oo["geom_buff"].intersection(line)
+                if inter.is_empty:
+                    continue
+                if inter.geom_type not in ("LineString", "MultiLineString"):
+                    continue
+                L = inter.length
+
+                # regra híbrida: absoluto OU relativo (para segmentos < 1m)
+                if (L / seg["comprimento"]) >= MIN_FRAC_RUA and L > melhor_score_lim:
+                    melhor_score_lim = L
+                    melhor_limitante = oo.get("name")
+            
+            # — Outro limitante?
+            # limitante_nome = None
+            # bbox2 = list(sidx_outros.intersection(line.bounds))
+
+            # for idx_o in bbox2:
+            #     oo = gdf_outros.iloc[idx_o]
+            #     inter = oo["geom_buff"].intersection(line)
+            #     if oo["geom_buff"].intersects(line):
+            #         if oo.get("name"):
+            #             limitante_nome = oo["name"]
+            #             break
+
+            if melhor_nome:
                 seg["tipo"] = "rua"
-                seg["confronto"] = rua_nome
-            #elif lote_conf:
-            #    seg["tipo"] = "lote"
-            #    seg["confronto"] = lote_conf
+                seg["confronto"] = melhor_nome
+            elif melhor_limitante:
+                seg["tipo"] = "limitante"
+                seg["confronto"] = melhor_limitante
             #else:
             #    seg["tipo"] = "limite"
             #    seg["confronto"] = "Limite"
@@ -1686,8 +1749,8 @@ def carregar_quadras_poligono(upload_dir: Path):
 
     candidatos = [
         upload_dir / "quadras" / "quadras.shp",
-        upload_dir / "quadras" / "quadras_m2s.shp",
         upload_dir / "quadras" / "quadras_dissolve.shp",
+        upload_dir / "final" / "quadras_dissolve.gpkg",
     ]
 
     for path in candidatos:
@@ -1714,6 +1777,7 @@ def carregar_quadras_poligono(upload_dir: Path):
 
 def gerar_memorial_quadras_docx(
         upload_dir: Path,
+        fuso: int=24,
         arquivo_segmentos="quadras_segmentos.gpkg",
         nucleo="Teste",
         municipio="Teste",
@@ -1834,7 +1898,7 @@ def gerar_memorial_quadras_docx(
         rod.add_run(
             "Todas as coordenadas aqui descritas estão georreferenciadas ao Sistema Geodésico "
             "Brasileiro, de coordenadas N m e E m, e encontram-se representadas no Sistema "
-            "U T M, referenciadas ao Meridiano Central n° 39º00', fuso -24, tendo como datum o "
+            f"U T M, referenciadas ao Meridiano Central n° 39º00', fuso -{fuso}, tendo como datum o "
             "SIRGAS2000. Todos os azimutes, distâncias, área e perímetro foram calculados no "
             "plano de projeção U T M."
         )
