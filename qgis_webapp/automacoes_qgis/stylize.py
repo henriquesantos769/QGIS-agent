@@ -267,3 +267,63 @@ def stylize_layer_outros(layer):
 
     layer.triggerRepaint()
     print("✨ Estilo aplicado com sucesso à camada de limitantes (rótulos com buffer branco).")
+
+def stylize_layer_vertices(layer):
+    if not layer or not layer.isValid():
+        print("❌ Camada inválida de vértices.")
+        return
+
+    # --------------------------------------------------
+    # 🎯 SÍMBOLO DO PONTO
+    # --------------------------------------------------
+    symbol = QgsMarkerSymbol.createSimple({
+        "name": "circle",
+        "color": "#FFFFFF",          # preenchimento branco
+        "outline_color": "#2ECC71",  # verde
+        "outline_width": "0.8",
+        "size": "3.0"
+    })
+
+    # tamanho fixo na tela
+    symbol.setSizeUnit(QgsUnitTypes.RenderMillimeters)
+
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+
+    # --------------------------------------------------
+    # 🔤 RÓTULOS (P01, P02, ...)
+    # --------------------------------------------------
+    settings = QgsPalLayerSettings()
+    settings.enabled = True
+    settings.fieldName = "vertice"
+    settings.isExpression = False
+
+    # 🔥 ENUM CORRETO
+    settings.placement = Qgis.LabelPlacement.OverPoint
+
+    settings.allowOverlap = True
+    settings.displayAll = True
+
+    text_format = QgsTextFormat()
+    text_format.setFont(QFont("Arial", 9, QFont.Bold))
+    text_format.setColor(QColor("#000000"))
+
+    buffer = QgsTextBufferSettings()
+    buffer.setEnabled(True)
+    buffer.setColor(QColor("#FFFFFF"))
+    buffer.setSize(1.0)
+
+    text_format.setBuffer(buffer)
+
+    # tamanho fixo do texto
+    text_format.setSize(9)
+    text_format.setSizeUnit(QgsUnitTypes.RenderPoints)
+
+    settings.setFormat(text_format)
+
+    labeling = QgsVectorLayerSimpleLabeling(settings)
+    layer.setLabeling(labeling)
+    layer.setLabelsEnabled(True)
+
+    layer.triggerRepaint()
+
+    print("✨ Vértices estilizados com rótulos visíveis (P01, P02...).")

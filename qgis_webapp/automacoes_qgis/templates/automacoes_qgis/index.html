@@ -8,12 +8,18 @@
   <title>Agente QGIS | Automação de Processos</title>
   <link rel="stylesheet" href="{% static 'automacoes_qgis/css/style.css' %}">
 </head>
+
 <body onpageshow="if (event.persisted || performance.getEntriesByType('navigation')[0]?.type === 'back_forward') location.reload();">
   <div class="wrap">
     <div class="card">
       <h1>Agente QGIS</h1>
-      <p class="subtitle">Envie os arquivos necessários para o processamento automatizado do projeto.</p>
+      <p class="subtitle">
+        Envie os arquivos necessários para o processamento automatizado do projeto.
+      </p>
 
+      <!-- =============================== -->
+      <!-- 🔼 ÁREA DE UPLOAD               -->
+      <!-- =============================== -->
       <div class="upload-area">
         <label class="uploader" id="dropzone-dxf">
           <input id="fileInputDXF" type="file" accept=".dxf" />
@@ -30,32 +36,82 @@
             <div class="hint">Opcional • Base georreferenciada</div>
           </div>
         </label>
+
+        <label class="uploader alt" id="dropzone-qgis-zip">
+          <input id="fileInputQGISZip" type="file" accept=".zip" />
+          <div>
+            <strong>Projeto QGIS (.zip)</strong>
+            <div class="hint">Envio direto para QField • Projeto já pronto</div>
+          </div>
+        </label>
       </div>
 
-      <div class="progress-area" id="progressArea">
+      <!-- ================================================= -->
+      <!-- ☁️ FLUXO ZIP (FORA DO PROGRESS AREA)             -->
+      <!-- ================================================= -->
+      <div class="footer" style="justify-content:flex-end;">
+        <button
+          id="btnEnviarProjetoZipQField"
+          class="btn cloud"
+          style="display:none;"
+          type="button"
+        >
+          ☁️ Enviar Projeto ZIP para QField
+        </button>
+      </div>
+
+      <!-- ================================================= -->
+      <!-- 📊 FLUXO DXF – PROGRESSO DO PIPELINE              -->
+      <!-- ================================================= -->
+      <div class="progress-area" id="progressArea" style="display:none;">
         <div class="progress-card">
-          <div class="badge"><span id="stageChip">Etapa 1 de 17</span></div>
+          <div class="badge">
+            <span id="stageChip">Etapa 1 de 17</span>
+          </div>
+
           <div style="display:flex; align-items:center; justify-content:space-between; margin:6px 0 8px;">
-            <div id="stageTitle" style="font-size:18px; font-weight:700;">Preparando ambiente…</div>
+            <div id="stageTitle" style="font-size:18px; font-weight:700;">
+              Preparando ambiente…
+            </div>
             <div class="ticker" id="percentLabel">0%</div>
           </div>
 
-          <div class="bar"><div id="barFill"></div></div>
+          <div class="bar">
+            <div id="barFill"></div>
+          </div>
+
           <div class="mini" id="detailLine">Aguardando início…</div>
           <div class="steps" id="stepsList" style="margin-top:14px;"></div>
 
           <div class="footer">
-            <button class="btn primary start-btn" id="startBtn" type="button">▶️ Iniciar</button>
-            <button class="btn ghost" id="resetBtn" style="display:none;" type="button">🔄 Reiniciar</button>
-            <button id="btnExportQField" class="btn success" style="display:none;" type="button">☁️ Enviar para QField Cloud</button>
-            <button id="viewBtn" class="btn download" style="display:none;" type="button">⬇️ Baixar Projeto QGIS</button>
-            <button id="btnBaixarEnviar" class="btn combo" style="display:none;" type="button">📦 Baixar e Enviar para QField Cloud</button>
+            <button class="btn primary start-btn" id="startBtn" type="button">
+              ▶️ Iniciar
+            </button>
+
+            <button class="btn ghost" id="resetBtn" style="display:none;" type="button">
+              🔄 Reiniciar
+            </button>
+
+            <button id="btnExportQField" class="btn success" style="display:none;" type="button">
+              ☁️ Enviar para QField Cloud
+            </button>
+
+            <button id="viewBtn" class="btn download" style="display:none;" type="button">
+              ⬇️ Baixar Projeto QGIS
+            </button>
+
+            <button id="btnBaixarEnviar" class="btn combo" style="display:none;" type="button">
+              📦 Baixar e Enviar para QField Cloud
+            </button>
           </div>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- =============================== -->
+  <!-- 🔔 TOAST                        -->
+  <!-- =============================== -->
   <div class="toast" id="toast">Processo iniciado!</div>
 
   <script src="{% static 'automacoes_qgis/js/main.js' %}"></script>

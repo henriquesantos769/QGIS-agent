@@ -36,7 +36,7 @@ import zipfile
 import geopandas as gpd
 from .stylize import (stylize_layer_ruas, stylize_layer_quadras, stylize_rotulos_area,
                         stylize_layer_quadras_rotulos, stylize_layer_outros,
-                        stylize_rotulos_lotes)
+                        stylize_rotulos_lotes, stylize_layer_vertices)
 import qgis.core as qgs
 import xml.etree.ElementTree as ET
 import copy
@@ -155,7 +155,8 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         ("quadras/quadras_dissolve.gpkg", "Quadras"),
         ("quadras/quadras_rotulos_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
-        ("limitante/limitante.gpkg", "Limitante")
+        ("limitante/limitante.gpkg", "Limitante"),
+        ("quadras/quadras_vertices.gpkg", "Quadras"),
     ]
 
     final_layer_obj = None
@@ -183,16 +184,24 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         # Estilização básica para camadas não 'final'
         if "ruas" in rel_path.lower():
             stylize_layer_ruas(layer)
+
+        elif "quadras_vertices" in rel_path.lower():
+            stylize_layer_vertices(layer)
+
         elif "quadras_rotulos" in rel_path.lower():
             stylize_layer_quadras_rotulos(layer)
-        elif "limitante" in rel_path.lower():
-            stylize_layer_outros(layer)
+
         elif "quadras" in rel_path.lower():
             stylize_layer_quadras(layer)
-        elif "lotes_rotulos" in rel_path.lower():
-            stylize_rotulos_lotes(layer)
+
         elif "lotes_area_rotulos" in rel_path.lower():
             stylize_rotulos_area(layer)
+
+        elif "lotes_rotulos" in rel_path.lower():
+            stylize_rotulos_lotes(layer)
+
+        elif "limitante" in rel_path.lower():
+            stylize_layer_outros(layer)
 
         if "final_gpkg" in rel_path.lower():
             final_layer_obj = layer

@@ -331,17 +331,58 @@ h1 { margin:0 0 8px;
   box-shadow: none;
 }
 
+.btn.cloud {
+  background: linear-gradient(90deg, #0ea5e9, #22c55e);
+  color: #ecfeff;
+  border: none;
+  position: relative;
+  overflow: hidden;
+}
+
+/* brilho sutil animado */
+.btn.cloud::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255,255,255,.25),
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  transition: transform .6s ease;
+}
+
+.btn.cloud:hover::before {
+  transform: translateX(100%);
+}
+
+.btn.cloud:hover {
+  background: linear-gradient(90deg, #0284c7, #16a34a);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(34,197,94,.28),
+              0 0 0 1px rgba(255,255,255,.08);
+}
+
+.btn.cloud:active {
+  transform: scale(0.97);
+  box-shadow: none;
+}
+
 /* Animação de aparição suave dos botões */
 #viewBtn,
 #btnExportQField,
 #btnBaixarEnviar,
-#resetBtn {
+#resetBtn,
+#btnEnviarProjetoZipQField {
   opacity: 0;
   transform: translateY(8px);
   transition: opacity .4s ease, transform .3s ease;
 }
 
 #viewBtn[style*="inline-flex"],
+#btnEnviarProjetoZipQField[style*="inline-flex"],
 #btnExportQField[style*="inline-flex"],
 #btnBaixarEnviar[style*="inline-flex"],
 #resetBtn[style*="inline-flex"] {

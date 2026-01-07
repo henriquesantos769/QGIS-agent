@@ -1,9 +1,14 @@
 // main.js (VERSÃO DE DEPURAÇÃO)
 
 const dropDXF = document.getElementById("dropzone-dxf");
+const dropQGISZip = document.getElementById("dropzone-qgis-zip");
 const dropOrtho = document.getElementById("dropzone-ortho");
 const fileInputDXF = document.getElementById("fileInputDXF");
 const fileInputOrtho = document.getElementById("fileInputOrtho");
+const fileInputQGISZip = document.getElementById("fileInputQGISZip");
+const btnEnviarProjetoZipQField = document.getElementById("btnEnviarProjetoZipQField");
+
+let selectedQGISZip = null;
 
 const startBtn = document.getElementById("startBtn");
 const progressArea = document.getElementById("progressArea");
@@ -13,6 +18,8 @@ const btnExportQField = document.getElementById("btnExportQField");
 const btnBaixarEnviar = document.getElementById("btnBaixarEnviar");
 const toast = document.getElementById("toast");
 let projetoPath = null;
+let btnQFieldAtivo = null;
+let intervaloQField = null;
 
 let selectedDXF = null;
 let selectedOrtho = null;
@@ -56,38 +63,71 @@ function showToast(msg) {
 // 🔹 Exibe botão "Iniciar" só quando ambos arquivos forem selecionados
 // ---------------------------------------------------------
 function checkReadyToStart() {
-  // DEBUG: Loga o estado das variáveis
-  console.log(`[DEBUG] Verificando: DXF=${!!selectedDXF}, Ortho=${!!selectedOrtho}`);
+  // 🔹 Fluxo ZIP (projeto pronto)
+  if (selectedQGISZip) {
+    startBtn.style.display = "none";
 
+    // 🔥 NÃO esconda o container
+    progressArea.style.display = "grid";
+
+    btnEnviarProjetoZipQField.style.display = "inline-flex";
+    return;
+  }
+
+  // 🔹 Fluxo normal (DXF + Ortho)
   if (selectedDXF && selectedOrtho) {
-    // DEBUG: Condição atendida
-    console.log("[DEBUG] ✅ Ambos selecionados! Mostrando botão E ÁREA.");
-    progressArea.style.display = "grid"; // <-- ❗ AQUI ESTÁ A CORREÇÃO
+    progressArea.style.display = "grid";
     startBtn.style.display = "inline-flex";
     startBtn.disabled = false;
   } else {
-    // DEBUG: Condição falhou
-    console.log("[DEBUG] ❌ Faltando arquivos. Botão e área ocultos.");
-    startBtn.disabled = true;
     startBtn.style.display = "none";
-    progressArea.style.display = "none"; // <-- ❗ E GARANTE QUE ESTEJA OCULTO
+    progressArea.style.display = "none";
   }
+
+  // 🔹 aqui SIM pode esconder o botão ZIP
+  btnEnviarProjetoZipQField.style.display = "none";
 }
 
 function handleChosenDXF(file) {
-  selectedDXF = file;
-  dropDXF.querySelector('.hint').textContent = `Selecionado: ${file.name}`;
-  dropDXF.classList.add('chosen');
-  showToast(`DXF carregado: ${file.name}`);
-  checkReadyToStart();
+  selectedQGISZip = null;
+  dropQGISZip?.classList.remove("chosen");
+  dropQGISZip?.querySelector(".hint") && (dropQGISZip.querySelector(".hint").textContent = "Envio direto para QField • Projeto já pronto");
+  btnEnviarProjetoZipQField.style.display = "none";
+
+  selectedDXF = file;
+  dropDXF.querySelector('.hint').textContent = `Selecionado: ${file.name}`;
+  dropDXF.classList.add('chosen');
+  showToast(`DXF carregado: ${file.name}`);
+  checkReadyToStart();
 }
 
 function handleChosenOrtho(file) {
-  selectedOrtho = file;
-  dropOrtho.querySelector('.hint').textContent = `Selecionado: ${file.name}`;
-  dropOrtho.classList.add('chosen');
-  showToast(`Ortofoto carregada: ${file.name}`);
-  checkReadyToStart();
+  selectedQGISZip = null;
+  dropQGISZip?.classList.remove("chosen");
+  dropQGISZip?.querySelector(".hint") && (dropQGISZip.querySelector(".hint").textContent = "Envio direto para QField • Projeto já pronto");
+  btnEnviarProjetoZipQField.style.display = "none";
+
+  selectedOrtho = file;
+  dropOrtho.querySelector('.hint').textContent = `Selecionado: ${file.name}`;
+  dropOrtho.classList.add('chosen');
+  showToast(`Ortofoto carregada: ${file.name}`);
+  checkReadyToStart();
+}
+
+function handleChosenQGISZip(file) {
+  selectedQGISZip = file;
+
+  dropQGISZip.querySelector(".hint").textContent =
+    `Selecionado: ${file.name}`;
+  dropQGISZip.classList.add("chosen");
+
+  selectedDXF = null;
+  selectedOrtho = null;
+
+  startBtn.style.display = "none";
+  btnEnviarProjetoZipQField.style.display = "inline-flex";
+
+  showToast(`📦 Projeto QGIS carregado: ${file.name}`);
 }
 
 fileInputDXF.addEventListener("change", e => {
@@ -112,26 +152,38 @@ fileInputOrtho.addEventListener("change", e => {
   e.target.value = ""; // idem aqui
 });
 
+fileInputQGISZip.addEventListener("change", e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  handleChosenQGISZip(file);
+  e.target.value = "";
+});
+
 // ---------------------------------------------------------
 // 🔹 Drag & Drop para os dois campos
 // ---------------------------------------------------------
-[dropDXF, dropOrtho].forEach(zone => {
-  zone.addEventListener("dragover", e => { 
-    e.preventDefault(); 
-    zone.style.transform = "scale(1.02)"; 
-  });
-  zone.addEventListener("dragleave", () => { 
-    zone.style.transform = "none"; 
-  });
-  zone.addEventListener("drop", e => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    console.log(`[DEBUG] Arquivo solto em ${zone.id}`);
-    if (zone.id === "dropzone-dxf") handleChosenDXF(file);
-    else handleChosenOrtho(file);
-    zone.style.transform = "none";
-  });
+[dropDXF, dropOrtho, dropQGISZip].forEach(zone => {
+  zone.addEventListener("dragover", e => {
+    e.preventDefault();
+    zone.style.transform = "scale(1.02)";
+  });
+
+  zone.addEventListener("dragleave", () => {
+    zone.style.transform = "none";
+  });
+
+  zone.addEventListener("drop", e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    if (zone.id === "dropzone-dxf") handleChosenDXF(file);
+    else if (zone.id === "dropzone-ortho") handleChosenOrtho(file);
+    else if (zone.id === "dropzone-qgis-zip") handleChosenQGISZip(file);
+
+    zone.style.transform = "none";
+  });
 });
 
 function getCSRFToken() {
@@ -180,6 +232,43 @@ async function enviarArquivosParaServidor() {
     clearLoading(startBtn);
    return false;
  }
+}
+
+async function enviarProjetoZipParaQField() {
+  if (!selectedQGISZip) {
+    showToast("❌ Nenhum projeto ZIP selecionado.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("projeto_zip", selectedQGISZip);
+
+  setLoading(btnEnviarProjetoZipQField, "Enviando...");
+  showToast("☁️ Enviando projeto QGIS para o QField Cloud...");
+
+  try {
+    monitorarProgressoQField();
+
+    const res = await fetch("/enviar_projeto_zip_qfield/", {
+      method: "POST",
+      headers: { "X-CSRFToken": getCSRFToken() },
+      body: formData,
+      credentials: "include"
+    });
+
+    const data = await res.json();
+
+    if (data.status === "sucesso") {
+      showToast("✅ Upload iniciado no QField Cloud!");
+    } else {
+      showToast("❌ " + (data.mensagem || "Falha no envio."));
+      clearLoading(btnEnviarProjetoZipQField);
+    }
+  } catch (err) {
+    console.error(err);
+    showToast("❌ Erro ao enviar projeto ZIP.");
+    clearLoading(btnEnviarProjetoZipQField);
+  }
 }
 
 // ---------------------------------------------------------
@@ -303,6 +392,7 @@ function finalizarInterface(erro = false) {
     resetBtn.style.display = "inline-flex";
   }
 }
+
 // ---------------------------------------------------------
 // 🔹 Iniciar pipeline
 // ---------------------------------------------------------
@@ -349,6 +439,11 @@ resetBtn.addEventListener("click", () => {
   location.reload(); // reproduz exatamente o comportamento de um refresh
 });
 
+btnEnviarProjetoZipQField.addEventListener("click", async () => {
+  btnQFieldAtivo = btnEnviarProjetoZipQField;
+  await enviarProjetoZipParaQField();
+});
+
 
 // ---------------------------------------------------------
 // 🔹 Ao carregar a página, zera backend e UI
@@ -366,56 +461,90 @@ window.addEventListener("load", async () => {
   viewBtn.style.display = "none";
   btnExportQField.style.display = "none";
   btnBaixarEnviar.style.display = "none";
-  
+  btnEnviarProjetoZipQField.style.display = "none";
+
   // Esta chamada agora cuida de esconder o startBtn E a progressArea
   checkReadyToStart(); 
 });
 
 async function monitorarProgressoQField() {
   console.log("[DEBUG] Monitoramento de envio QField iniciado...");
-  let tentativasSemResposta = 0;
-  const maxTentativas = 10; // evita loop infinito se backend parar de responder
 
-  const interval = setInterval(async () => {
+  // 🔒 Garante que só exista UM monitor ativo
+  if (intervaloQField) {
+    clearInterval(intervaloQField);
+    intervaloQField = null;
+  }
+
+  let tentativasSemResposta = 0;
+  const maxTentativas = 10;
+
+  intervaloQField = setInterval(async () => {
     try {
-      const cacheBuster = new Date().getTime();
+      const cacheBuster = Date.now();
       const res = await fetch(`/progresso_qfield/?v=${cacheBuster}`, {
         cache: "no-store",
-        headers: { "Cache-Control": "no-store", "Pragma": "no-cache" },
+        headers: {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
         credentials: "include"
       });
 
       if (!res.ok) {
         console.warn("[DEBUG] Falha na requisição de progresso:", res.status);
         tentativasSemResposta++;
+
         if (tentativasSemResposta >= maxTentativas) {
-          clearInterval(interval);
+          clearInterval(intervaloQField);
+          intervaloQField = null;
+
+          if (btnQFieldAtivo) {
+            clearLoading(btnQFieldAtivo);
+            btnQFieldAtivo = null;
+          }
+
           showToast("⚠️ Falha ao obter progresso do QField Cloud.");
         }
         return;
       }
 
       const data = await res.json();
+
       if (data.mensagem) {
         console.log(`[QField] ${data.mensagem}`);
         showToast(data.mensagem);
       }
 
+      // ✅ Upload concluído
       if (data.mensagem?.includes("✅ Upload concluído")) {
-        clearInterval(interval);
+        clearInterval(intervaloQField);
+        intervaloQField = null;
+
+        if (btnQFieldAtivo) {
+          clearLoading(btnQFieldAtivo);
+          btnQFieldAtivo = null;
+        }
+
         showToast("✅ Upload completo no QField Cloud!");
-        clearLoading(btnExportQField);
-        console.log("[DEBUG] Monitoramento QField encerrado com sucesso.");
       }
 
     } catch (err) {
       console.error("[DEBUG] Erro no monitoramento QField:", err);
-      clearInterval(interval);
-      clearLoading(btnExportQField);
+
+      clearInterval(intervaloQField);
+      intervaloQField = null;
+
+      if (btnQFieldAtivo) {
+        clearLoading(btnQFieldAtivo);
+        btnQFieldAtivo = null;
+      }
+
       showToast("❌ Erro ao monitorar progresso do QField.");
     }
-  }, 1500); // intervalo levemente maior para evitar sobrecarga no servidor
+  }, 1500);
 }
+
 
 btnExportQField.addEventListener("click", async () => {
   if (!projetoPath) {
@@ -428,6 +557,7 @@ btnExportQField.addEventListener("click", async () => {
 
   try {
     // inicia monitoramento em paralelo
+    btnQFieldAtivo = btnExportQField;
     monitorarProgressoQField();
 
     const res = await fetch("/exportar-qfield/", {
@@ -507,6 +637,7 @@ btnBaixarEnviar.addEventListener("click", async () => {
 
   try {
     // Dispara o monitoramento de progresso do upload
+    btnQFieldAtivo = btnBaixarEnviar;
     monitorarProgressoQField();
 
     // Faz a requisição ao endpoint combinado

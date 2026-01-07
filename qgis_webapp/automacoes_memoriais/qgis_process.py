@@ -25,7 +25,10 @@ from pipeline import (
     calcular_medidas_e_azimutes,
     gerar_memoriais_em_lote,
     gerar_memorial_quadras_docx,
-    obter_fuso_por_epsg
+    obter_fuso_por_epsg,
+    gerar_geometrias_quadras,
+    segmentar_quadra_com_confrontantes,
+    calcular_deflexoes_segmentos
 )
 
 
@@ -178,7 +181,10 @@ def main():
         gerar_memoriais_em_lote(out_dir)
 
         write_progress(out_dir, 18, "📝 Gerando memoriais das quadras...")
-        #gerar_memorial_quadras_docx(out_dir, fuso=fuso)
+        gerar_geometrias_quadras(out_dir, epsg_lotes=int(crs.split(":")[1]))
+        segmentar_quadra_com_confrontantes(out_dir)
+        calcular_deflexoes_segmentos(out_dir)
+        gerar_memorial_quadras_docx(out_dir, fuso=fuso, epsg_default=int(crs.split(":")[1]))
 
         write_progress(out_dir, 20, "✅ Processamento concluído com sucesso")
 

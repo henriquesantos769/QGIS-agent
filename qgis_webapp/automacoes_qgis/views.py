@@ -13,7 +13,7 @@ from .pipeline import (
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
     converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, criar_camada_linhas,
-    gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm
+    gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm, gerar_vertices_quadras
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -46,9 +46,35 @@ def atualizar_progresso(request, etapa, mensagem):
     request.session.modified = True
     print(f"📊 [{etapa}] {mensagem}")
 
+def atualizar_progresso_qfield(request, mensagem):
+    request.session["progresso_qfield"] = {
+        "mensagem": mensagem
+    }
+    request.session.modified = True
+
 @never_cache
 def progresso(request):
     progresso = request.session.get("progresso", {"etapa": 0, "mensagem": "Aguardando início"})
+    resp = JsonResponse(progresso)
+    resp["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp["Pragma"] = "no-cache"
+    resp["Expires"] = "0"
+    return resp
+
+def atualizar_progresso_qfield_thread(session_key, mensagem):
+    session = Session.objects.get(session_key=session_key)
+    data = session.get_decoded()
+    data["progresso_qfield"] = {"mensagem": mensagem}
+    session.session_data = Session.objects.encode(data)
+    session.save()
+
+@never_cache
+def progresso_qfield(request):
+    progresso = request.session.get(
+        "progresso_qfield",
+        {"mensagem": "Aguardando envio"}
+    )
+
     resp = JsonResponse(progresso)
     resp["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp["Pragma"] = "no-cache"
@@ -82,6 +108,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "lotes_poly": upload_dir / "lotes_poligonos" / "lotes_poligonos.shp",
             "lotes_fix": upload_dir / "lotes_poligonos" / "lotes_poligonos_fix.shp",
             "lotes_buffer": upload_dir / "lotes_poligonos" / "lotes_buffer.shp",
+            "quadras_dissolve_temp": upload_dir / "quadras" / "quadras_temp.shp",
             "quadras_dissolve_gpkg": upload_dir / "quadras" / "quadras_dissolve.gpkg",
             "quadras_raw": upload_dir / "quadras" / "quadras_dissolve.shp",
             "quadras_single": upload_dir / "quadras" / "quadras.shp",
@@ -122,7 +149,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         atualizar_progresso_thread(session_key, 6, "🧼 Corrigindo geometrias dos lotes...")
         lotes_fix = corrigir_geometrias(lotes_poly, paths["lotes_fix"])
 
-        quadras_dissolve = dissolve_para_quadras(lotes_fix, paths["quadras_dissolve_gpkg"])
+        quadras_dissolve = dissolve_para_quadras(lotes_fix, paths["quadras_dissolve_temp"])
+        quadras_dissolve_num = atribuir_letras_quadras(quadras_dissolve, paths["quadras_dissolve_gpkg"])
 
         atualizar_progresso_thread(session_key, 7, "🗂️ Gerando buffers dos lotes...")
         lotes_buffer = buffer_lotes(lotes_fix, paths["lotes_buffer"])
@@ -134,10 +162,12 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         quadras = singlepart_quadras(quadras_raw, paths["quadras_single2"])
 
         atualizar_progresso_thread(session_key, 10, "🧩 Atribuindo letras às quadras...")
-        quadras = atribuir_letras_quadras(quadras, paths["quadras_single"])
+        quadras = atribuir_letras_quadras(quadras, paths["quadras_single"], driver="ESRI Shapefile")
 
         atualizar_progresso_thread(session_key, 11, "🗂️ Gerando pontos de rótulo das quadras...")
         gerar_pontos_rotulo(quadras, paths["quadras_pts"])
+
+        gerar_vertices_quadras(upload_dir)
 
         atualizar_progresso_thread(session_key, 12, "🏠 Juntando lotes e quadras...")
         lotes_join = join_lotes_quadras(lotes_fix, quadras, paths["lotes_join"])
@@ -184,8 +214,6 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
 # -------------------------------
 @csrf_exempt
 def criar_projeto_qgis(request):
-    global QFIELD_PROGRESS  # esse ainda é global, porque a exportação QFieldCloud é separada
-
     # 🔒 Reinicia progresso apenas da sessão atual
     request.session["progresso"] = {"etapa": 0, "mensagem": "Aguardando início"}
     request.session["aguardando_ruas"] = False
@@ -194,7 +222,8 @@ def criar_projeto_qgis(request):
 
     request.session.save()
 
-    QFIELD_PROGRESS = {"etapa": 0, "mensagem": ""}
+    request.session["progresso_qfield"] = {"mensagem": "Aguardando envio"}
+    request.session.modified = True
     print("🚀 Novo processamento iniciado (isolado por sessão)")
 
     atualizar_progresso(request, 0, "Iniciando criação do projeto...")
@@ -297,15 +326,6 @@ def tentar_overpass(request=None):
     except RuntimeError as e:
         atualizar_progresso(request, 98, f"⚠️ Nova falha no Overpass: {e}")
         return JsonResponse({"status": "falha_overpass", "mensagem": str(e)})
-
-
-    except RuntimeError as e:
-        atualizar_progresso(request, 98, f"⚠️ Nova falha no Overpass: {e}")
-        return JsonResponse({
-            "status": "falha_overpass",
-            "mensagem": str(e)
-        })
-
     except Exception as e:
         atualizar_progresso(request, 99, f"❌ Erro inesperado ao repetir Overpass: {e}")
         return JsonResponse({
@@ -389,16 +409,26 @@ def package_project_for_qfield(project_file: Path, export_folder: Path, include_
     return export_folder
 
 
-def enviar_para_qfieldcloud(request):
-    global QFIELD_PROGRESS
-    QFIELD_PROGRESS = {"etapa": 0, "mensagem": "Iniciando upload..."}
+def enviar_para_qfieldcloud(session_key):
+    atualizar_progresso_qfield_thread(
+        session_key,
+        "Iniciando envio para QFieldCloud..."
+    )
+    session = Session.objects.get(session_key=session_key)
+    data = session.get_decoded()
+    base_dir_str = data.get("base_dir")
+    if not base_dir_str:
+        atualizar_progresso_qfield_thread(session_key, "❌ base_dir ausente na sessão.")
+        return
+
+    base_dir = Path(base_dir_str)
+    if not base_dir.exists():
+        atualizar_progresso_qfield_thread(session_key, "❌ Pasta do projeto não encontrada no servidor.")
+        return
 
     username = os.getenv("QFIELD_USER")
     password = os.getenv("QFIELD_PASS")
-    base_dir = Path(request.session.get("base_dir", ""))
 
-    if not base_dir.exists():
-        return JsonResponse({"status": "erro", "mensagem": "Base do projeto não encontrada."})
 
     # Detecta ortofoto e gera nome do projeto
     ortho_dir = base_dir / "ortofoto"
@@ -426,7 +456,7 @@ def enviar_para_qfieldcloud(request):
     project_id = proj["id"]
 
     # 🔹 Lista arquivos relevantes da pasta atual
-    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto"]
+    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante"]
     exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs"}
     files = []
 
@@ -452,7 +482,10 @@ def enviar_para_qfieldcloud(request):
     for i, file_path in enumerate(files, start=1):
         time.sleep(2)
         rel_path = file_path.relative_to(upload_dir).as_posix()
-        QFIELD_PROGRESS = {"etapa": i, "mensagem": f"⬆️ Enviando {rel_path} ({i}/{total})"}
+        atualizar_progresso_qfield_thread(
+            session_key,
+            f"⬆️ Enviando {rel_path} ({i}/{total})"
+        )
         print(f"➡️ Uploadando: {rel_path}")
 
         try:
@@ -467,7 +500,10 @@ def enviar_para_qfieldcloud(request):
         except Exception as e:
             print(f"⚠️ Falha ao enviar {rel_path}: {e}")
 
-    QFIELD_PROGRESS = {"etapa": total, "mensagem": "✅ Upload concluído!"}
+    atualizar_progresso_qfield_thread(
+        session_key,
+        "✅ Upload concluído"
+    )
     print("✅ Finalizado!")
     return JsonResponse({"status": "sucesso", "projeto_id": project_id})
 
@@ -515,22 +551,75 @@ def baixar_e_enviar_qfieldcloud(request):
 
     # Etapa 2: enviar para QFieldCloud
     try:
-        response_upload = enviar_para_qfieldcloud(request)
+        threading.Thread(
+            target=enviar_para_qfieldcloud,
+            args=(request.session.session_key,),
+            daemon=True
+        ).start()
         print("✅ Projeto enviado para o QFieldCloud com sucesso.")
     except Exception as e:
         print(f"⚠️ Falha ao enviar para o QFieldCloud: {e}")
-        response_upload = JsonResponse({
-            "status": "erro",
-            "mensagem": f"Falha ao enviar para QFieldCloud: {str(e)}"
-        })
 
     # Etapa 3: retornar o ZIP para download
     response = HttpResponse(buffer.getvalue(), content_type="application/zip")
     response["Content-Disposition"] = 'attachment; filename="pacote_projeto_qgis.zip"'
     return response
 
+@csrf_exempt
+def enviar_projeto_zip_qfield(request):
+    if request.method != "POST" or "projeto_zip" not in request.FILES:
+        return JsonResponse({"status": "erro", "mensagem": "ZIP não enviado"})
 
-def progresso_qfield(request):
-    global QFIELD_PROGRESS
-    return JsonResponse(QFIELD_PROGRESS)
+    atualizar_progresso_qfield(request, "📦 Recebendo projeto ZIP...")
 
+    zip_file = request.FILES["projeto_zip"]
+
+    base_dir = Path(settings.MEDIA_ROOT) / "uploads" / f"zip_{int(time.time())}"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path = base_dir / zip_file.name
+    with open(zip_path, "wb+") as f:
+        for chunk in zip_file.chunks():
+            f.write(chunk)
+
+    atualizar_progresso_qfield(request, "📂 Extraindo projeto...")
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(base_dir)
+
+    request.session["base_dir"] = str(base_dir)
+    request.session.modified = True
+    request.session.save()
+
+    threading.Thread(
+        target=enviar_para_qfieldcloud,
+        args=(request.session.session_key,),
+        daemon=True
+    ).start()
+
+    return JsonResponse({
+        "status": "sucesso",
+        "mensagem": "Upload iniciado no QField Cloud"
+    })
+
+@csrf_exempt
+def exportar_qfield_view(request):
+    # Só POST (pra bater com seu JS)
+    if request.method != "POST":
+        return JsonResponse({"status": "erro", "mensagem": "Método inválido."}, status=405)
+
+    base_dir = request.session.get("base_dir")
+    if not base_dir:
+        return JsonResponse({
+            "status": "erro",
+            "mensagem": "Nenhum projeto ativo na sessão. Gere o projeto antes."
+        }, status=400)
+
+    # dispara upload em thread usando session_key
+    threading.Thread(
+        target=enviar_para_qfieldcloud,
+        args=(request.session.session_key,),
+        daemon=True
+    ).start()
+
+    return JsonResponse({"status": "sucesso", "mensagem": "Upload iniciado."})

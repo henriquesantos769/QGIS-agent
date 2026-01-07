@@ -48,6 +48,138 @@ def save_layer(layer: QgsVectorLayer, file_path: Path, driver="ESRI Shapefile", 
         raise RuntimeError(f"Falha ao salvar '{file_path}': {msg}")
     return file_path
 
+def gerar_vertices_quadras(
+    upload_dir: Path,
+    quadras_dissolve_gpkg: str = "quadras_dissolve.gpkg",
+    out_path: Path = None,
+):
+    """
+    Gera uma camada POINT com os vértices das quadras a partir do quadras_dissolve.
+
+    Regras (compatível com teu memorial):
+      - P01 = vértice mais ao norte (maior Y)
+      - sequência P02..Pn seguindo a ordem do anel externo da geometria (sem inverter sentido)
+
+    Campos:
+      - quadra (String)
+      - vertice (String)  -> P01, P02...
+      - x (Double)
+      - y (Double)
+    """
+
+    from qgis.core import (
+        QgsVectorLayer, QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
+        QgsPointXY, QgsField, QgsFields, QgsWkbTypes
+    )
+    from PyQt5.QtCore import QVariant
+
+    # -----------------------------
+    # paths
+    # -----------------------------
+    quadras_path = upload_dir / "quadras" / quadras_dissolve_gpkg
+    if out_path is None:
+        out_path = upload_dir / "quadras" / "quadras_vertices.gpkg"
+
+    quadras = QgsVectorLayer(str(quadras_path), "quadras_dissolve", "ogr")
+    if not quadras.isValid():
+        raise RuntimeError(f"Camada inválida: {quadras_path}")
+
+    crs = quadras.crs()
+
+    # -----------------------------
+    # cria layer em memória (POINT)
+    # -----------------------------
+    mem = QgsVectorLayer(f"Point?crs={crs.authid()}", "quadras_vertices_tmp", "memory")
+    pr = mem.dataProvider()
+
+    pr.addAttributes([
+        QgsField("quadra", QVariant.String),
+        QgsField("vertice", QVariant.String),
+        QgsField("x", QVariant.Double),
+        QgsField("y", QVariant.Double),
+    ])
+    mem.updateFields()
+
+    # -----------------------------
+    # helper: pega anel externo
+    # -----------------------------
+    def extrair_anel_externo(geom: QgsGeometry):
+        """
+        Retorna lista de QgsPointXY do anel externo (sem o ponto repetido final).
+        Suporta Polygon e MultiPolygon.
+        """
+        if geom is None or geom.isEmpty():
+            return []
+
+        if QgsWkbTypes.geometryType(geom.wkbType()) != QgsWkbTypes.PolygonGeometry:
+            return []
+
+        if geom.isMultipart():
+            mp = geom.asMultiPolygon()
+            if not mp or not mp[0] or not mp[0][0]:
+                return []
+            ring = mp[0][0]  # primeira parte, anel externo
+        else:
+            p = geom.asPolygon()
+            if not p or not p[0]:
+                return []
+            ring = p[0]  # anel externo
+
+        pts = [QgsPointXY(pt.x(), pt.y()) for pt in ring]
+        if len(pts) >= 2 and pts[0] == pts[-1]:
+            pts = pts[:-1]
+        return pts
+
+    # -----------------------------
+    # gera pontos P01..Pn
+    # -----------------------------
+    feats_out = []
+
+    for ft in quadras.getFeatures():
+        geom = ft.geometry()
+        pts = extrair_anel_externo(geom)
+        if len(pts) < 3:
+            continue
+
+        quadra_val = ft["quadra"]
+        quadra_val = str(quadra_val) if quadra_val is not None else ""
+
+        # P01 = mais ao norte (maior Y)
+        idx_inicio = max(range(len(pts)), key=lambda i: pts[i].y())
+
+        # reordena circularmente (mesma ideia do memorial)
+        pts_ord = pts[idx_inicio:] + pts[:idx_inicio]
+
+        for i, p in enumerate(pts_ord, start=1):
+            f = QgsFeature(mem.fields())
+            f.setGeometry(QgsGeometry.fromPointXY(p))
+            f["quadra"] = quadra_val
+            f["vertice"] = f"P{str(i).zfill(2)}"
+            f["x"] = float(p.x())
+            f["y"] = float(p.y())
+            feats_out.append(f)
+
+    pr.addFeatures(feats_out)
+    mem.updateExtents()
+
+    # -----------------------------
+    # salva em GPKG usando teu save_layer
+    # -----------------------------
+    # (se já existir, remove pra não acumular)
+    if out_path.exists():
+        out_path.unlink()
+
+    save_layer(mem, out_path, driver="GPKG", layer_name="quadras_vertices")
+
+    layer_vertices = QgsVectorLayer(str(out_path), "quadras_vertices", "ogr")
+    if not layer_vertices.isValid():
+        raise RuntimeError(f"Falha ao carregar saída: {out_path}")
+
+    QgsProject.instance().addMapLayer(layer_vertices)
+
+    print(f"✅ Camada de vértices criada: {out_path}")
+    return layer_vertices
+
 def detectar_fuso_utm(path_dxf: str):
     MAPA_SIRGAS = {
         21: 31981,
@@ -306,7 +438,7 @@ def singlepart_quadras(quadras_raw, out_path):
     return quadras
 
 
-def atribuir_letras_quadras(quadras, out_path):
+def atribuir_letras_quadras(quadras, out_path, driver="GPKG"):
     pr = quadras.dataProvider()
     if "quadra" not in [f.name() for f in quadras.fields()]:
         pr.addAttributes([QgsField("quadra", QVariant.String, len=8)])
@@ -319,7 +451,7 @@ def atribuir_letras_quadras(quadras, out_path):
     for i, ft in enumerate(feats, start=1):
         quadras.changeAttributeValue(ft.id(), idx, i)
     quadras.commitChanges()
-    save_layer(quadras, out_path)
+    save_layer(quadras, out_path, driver=driver)
     print("Letras atribuídas às quadras:", out_path)
     return quadras
 
