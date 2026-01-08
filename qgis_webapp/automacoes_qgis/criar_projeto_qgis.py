@@ -147,6 +147,9 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     project_name = "project_cloud_1 (QFieldCloud)"
     project.setTitle(project_name)
 
+    fotos_dir = base_dir / "fotos"
+    fotos_dir.mkdir(exist_ok=True)
+
     # --- Carregar camadas vetoriais ---
     camadas = [
         ("final/final_gpkg.gpkg", "Lotes"),
@@ -220,6 +223,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 ("STATUS", QVariant.String),
                 ("quadra", QVariant.String),
                 ("lote_num", QVariant.String),
+                ("foto", QVariant.String)
             ]
 
             for fname, ftype in required_fields:
@@ -269,6 +273,27 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                     hidden_widget = QgsEditorWidgetSetup("Hidden", {})
                     layer.setEditorWidgetSetup(idx, hidden_widget)
                     form_config.setReadOnly(idx, True)
+
+            layer.setEditFormConfig(form_config)
+
+            # --- Campo FOTO (fachada do imóvel) ---
+            foto_idx = layer.fields().indexFromName("foto")
+            if foto_idx != -1:
+                foto_widget = QgsEditorWidgetSetup(
+                    "ExternalResource",
+                    {
+                        "UseLink": False,
+                        "Property": "photo",
+                        "DocumentViewer": 2,
+                        "DefaultRoot": "./fotos",
+                        "RelativeStorage": True,
+                        "StorageMode": 0,
+                        "FileWidget": True,
+                        "AllowMultiple": False
+                    }
+                )
+                layer.setEditorWidgetSetup(foto_idx, foto_widget)
+                form_config.setReadOnly(foto_idx, False)
 
             layer.setEditFormConfig(form_config)
 

@@ -116,7 +116,7 @@ def stylize_layer_ruas(layer):
         'width': '0.5',
         'penstyle': 'solid'
     })
-    layer.renderer().setSymbol(symbol)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
 
     # ===================== CONFIGURAÇÃO DE RÓTULOS =====================
     label_settings = QgsPalLayerSettings()

@@ -408,7 +408,6 @@ def package_project_for_qfield(project_file: Path, export_folder: Path, include_
     print(f"📦 Projeto empacotado em: {export_folder}")
     return export_folder
 
-
 def enviar_para_qfieldcloud(session_key):
     atualizar_progresso_qfield_thread(
         session_key,
@@ -429,7 +428,6 @@ def enviar_para_qfieldcloud(session_key):
     username = os.getenv("QFIELD_USER")
     password = os.getenv("QFIELD_PASS")
 
-
     # Detecta ortofoto e gera nome do projeto
     ortho_dir = base_dir / "ortofoto"
     ortho_files = list(ortho_dir.glob("*.tif"))
@@ -449,14 +447,14 @@ def enviar_para_qfieldcloud(session_key):
 
     proj = client.create_project(
         name=project_name,
-        owner="OrganizacaoTeste",
+        owner="ICL_ORG",
         description="Exportado via Django",
         is_public=False
     )
     project_id = proj["id"]
 
     # 🔹 Lista arquivos relevantes da pasta atual
-    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante"]
+    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante", "fotos"]
     exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs"}
     files = []
 
