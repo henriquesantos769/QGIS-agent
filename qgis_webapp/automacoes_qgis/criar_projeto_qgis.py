@@ -284,7 +284,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                     {
                         "UseLink": False,
                         "Property": "photo",
-                        "DocumentViewer": 2,
+                        "DocumentViewer": 1,
                         "DefaultRoot": "./fotos",
                         "RelativeStorage": True,
                         "StorageMode": 0,

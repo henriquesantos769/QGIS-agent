@@ -262,7 +262,7 @@ def criar_projeto_qgis(request):
             try:
                 atualizar_progresso(request, 2.5, "🧩 Convertendo ortofoto ECW para TIFF reduzido (pode demorar)...")
                 # ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=96)
-                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=2)
+                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=70)
                 print(f"✅ Ortofoto convertida automaticamente: {ortho_path.name}")
             except Exception as e:
                 print(f"⚠️ Erro ao converter ECW: {e}")
