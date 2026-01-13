@@ -739,6 +739,7 @@ def extrair_ruas_overpass(quadras, out_dir, DEFAULT_CRS="EPSG:31983"):
 
         # Agora reprojeta pro mesmo CRS da camada de quadras
         gdf = gdf.to_crs(quadras.crs().authid())
+        gdf["rua_id"] = range(1, len(gdf) + 1)
         
         ruas_dir = out_dir / "ruas"
         ruas_dir.mkdir(parents=True, exist_ok=True)

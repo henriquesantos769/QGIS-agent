@@ -262,7 +262,7 @@ def criar_projeto_qgis(request):
             try:
                 atualizar_progresso(request, 2.5, "🧩 Convertendo ortofoto ECW para TIFF reduzido (pode demorar)...")
                 # ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=96)
-                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=70)
+                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=2)
                 print(f"✅ Ortofoto convertida automaticamente: {ortho_path.name}")
             except Exception as e:
                 print(f"⚠️ Erro ao converter ECW: {e}")
@@ -455,7 +455,7 @@ def enviar_para_qfieldcloud(session_key):
 
     # 🔹 Lista arquivos relevantes da pasta atual
     pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante", "fotos"]
-    exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs"}
+    exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs", "qml"}
     files = []
 
     for pasta in pastas_necessarias:
@@ -471,6 +471,10 @@ def enviar_para_qfieldcloud(session_key):
     project_qgs = upload_dir / "project_cloud.qgs"
     if project_qgs.exists():
         files.append(project_qgs)
+
+    project_qml = upload_dir / "project_cloud.qml"
+    if project_qml.exists():
+        files.append(project_qml)
 
     files.sort(key=lambda p: (p.suffix.lower() == ".qgs", p.as_posix()))
     total = len(files)

@@ -27,7 +27,9 @@ from qgis.core import (
     QgsSingleSymbolRenderer,
     QgsWkbTypes,
     QgsTextBufferSettings,
-    QgsUnitTypes
+    QgsUnitTypes,
+    QgsDefaultValue,
+    QgsRelation
 )
 from pathlib import Path
 from qgis.PyQt.QtGui import QColor, QFont
@@ -50,6 +52,137 @@ from qgis.analysis import QgsNativeAlgorithms
 
 # CRS padrão (SIRGAS 2000 / UTM 22S)
 project_crs = QgsCoordinateReferenceSystem("EPSG:31982")
+
+QFIELD_PLUGIN_TEMPLATE = r"""
+import QtQuick
+import org.qfield
+import Theme
+
+Item {
+    id: root
+
+    property var mainWindow: iface.mainWindow()
+    property var mapCanvas: iface.mapCanvas()
+
+    property bool selectingFrontStreet: false
+
+    property string ruasLayerName: "Ruas"
+    property string ruaNameField: "name"
+    property string loteFieldRuaId: "frente_rua_id"
+    property string loteFieldRuaNome: "frente_rua_nome"
+
+    QfToolButton {
+        id: frontStreetButton
+        iconSource: Theme.getThemeVectorIcon("ic_info_white_24dp")
+        iconColor: "white"
+        round: true
+        property color activeColor: "#2196f3"
+        property color inactiveColor: "#444444"
+        bgcolor: selectingFrontStreet ? activeColor : inactiveColor
+
+        onClicked: {
+            selectingFrontStreet = !selectingFrontStreet
+            if (selectingFrontStreet) {
+                // LEGACY API QUE FUNCIONA EM ANDROID
+                mainWindow.setMode("identify")
+                mainWindow.displayToast("Modo frente: toque na RUA")
+            } else {
+                mainWindow.setMode("pan")
+                mainWindow.displayToast("Modo frente desativado")
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        iface.addItemToPluginsToolbar(frontStreetButton)
+        mainWindow.displayToast("Plugin de frente carregado")
+
+        pointHandler.registerHandler("select_front_street", function(point, type, interactionType) {
+            if (!selectingFrontStreet)
+                return false
+
+            // aqui vamos logar pra descobrir o evento real
+            mainWindow.displayToast("EVENT: " + interactionType)
+
+            if (interactionType === "clicked"
+                || interactionType === "tap"
+                || interactionType === "press") {
+                return handleFrontStreetTap(point)
+            }
+
+            return false
+        })
+
+        pointHandler.setMapInteractionEnabled(true)
+    }
+
+    function currentFeatureDrawer() {
+        var items = iface.uiItems()
+        for (var i = 0; i < items.length; i++)
+            if (items[i].featureModel)
+                return items[i]
+        return null
+    }
+
+    function handleFrontStreetTap(point) {
+        mainWindow.displayToast("Toque detectado")
+
+        var drawer = currentFeatureDrawer()
+        if (!drawer || !drawer.featureModel) {
+            mainWindow.displayToast("Abra o lote primeiro")
+            mainWindow.setMode("pan")
+            selectingFrontStreet = false
+            return true
+        }
+
+        var loteFeature = drawer.featureModel.feature
+        if (!loteFeature) {
+            mainWindow.displayToast("Nenhum lote ativo")
+            return true
+        }
+
+        var px = 20
+        var tl = mapCanvas.mapSettings.screenToCoordinate(Qt.point(point.x - px, point.y - px))
+        var br = mapCanvas.mapSettings.screenToCoordinate(Qt.point(point.x + px, point.y + px))
+        var rectangle = GeometryUtils.createRectangleFromPoints(tl, br)
+
+        var ruasLayers = qgisProject.mapLayersByName(ruasLayerName)
+        if (!ruasLayers || ruasLayers.length === 0) {
+            mainWindow.displayToast("Camada 'Ruas' não encontrada")
+            return true
+        }
+
+        var it = LayerUtils.createFeatureIteratorFromRectangle(ruasLayers[0], rectangle)
+        if (!it.hasNext()) {
+            mainWindow.displayToast("Nenhuma rua nesse ponto")
+            return true
+        }
+
+        var rua = it.next()
+        var ruaId = rua.id
+        var ruaNome = rua.attribute(ruaNameField)
+
+        var idxNome = loteFeature.fields.names.indexOf(loteFieldRuaNome)
+        var idxId = loteFeature.fields.names.indexOf(loteFieldRuaId)
+
+        if (idxNome < 0 || idxId < 0) {
+            mainWindow.displayToast("Campos frente_rua_* faltando")
+            return true
+        }
+
+        loteFeature.setAttribute(idxId, ruaId)
+        loteFeature.setAttribute(idxNome, ruaNome)
+        drawer.featureModel.applyFeatureModel()
+
+        mainWindow.displayToast("Frente: " + ruaNome)
+
+        selectingFrontStreet = false
+        mainWindow.setMode("pan")
+        return true
+    }
+}
+"""
+
 
 
 def fix_relative_paths(qgz_path: Path, base_dir: Path):
@@ -163,6 +296,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     ]
 
     final_layer_obj = None
+    ruas_layer_obj = None
 
     for rel_path, nome_grupo in camadas:
         camada_path = base_dir / rel_path
@@ -186,6 +320,19 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
         # Estilização básica para camadas não 'final'
         if "ruas" in rel_path.lower():
+            ruas_layer_obj = layer
+            layer.startEditing()
+            prov = layer.dataProvider()
+
+            if "rua_id" not in [f.name() for f in layer.fields()]:
+                prov.addAttributes([QgsField("rua_id", QVariant.Int)])
+                layer.updateFields()
+
+                # preencher ID único incremental
+                for i, f in enumerate(layer.getFeatures()):
+                    layer.changeAttributeValue(f.id(), layer.fields().indexFromName("rua_id"), i+1)
+
+            layer.commitChanges()
             stylize_layer_ruas(layer)
 
         elif "quadras_vertices" in rel_path.lower():
@@ -223,7 +370,9 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 ("STATUS", QVariant.String),
                 ("quadra", QVariant.String),
                 ("lote_num", QVariant.String),
-                ("foto", QVariant.String)
+                ("foto", QVariant.String),
+                ("frente_rua_nome", QVariant.String),
+                ("frente_rua_id", QVariant.Int),
             ]
 
             for fname, ftype in required_fields:
@@ -371,6 +520,100 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         group.addLayer(layer)
         print(f"✅ Camada adicionada: {rel_path} | ID: {layer.id()}")
     
+    print("🔧 Configurando relação frente_rua...")
+
+    # segurança
+    if final_layer_obj is None:
+        print("❌ final_layer_obj não definido — abortando relação")
+        return
+    if ruas_layer_obj is None:
+        print("❌ ruas_layer_obj não definido — abortando relação")
+        return
+
+    lotes_layer = final_layer_obj
+    ruas_layer = ruas_layer_obj
+
+    ruas_layer.setCustomProperty("identify/format", "Value")
+    ruas_layer.setCustomProperty("QFieldSync/cloud_action", "copy")
+    
+    # -------------------------------------------
+    # 1) Criar a relação formal no projeto
+    # -------------------------------------------
+    relation = QgsRelation()
+    relation.setId("frente_rua")
+    relation.setName("frente_rua")
+
+    # pai: RUAS   (referenced)
+    relation.setReferencedLayer(ruas_layer.id())
+    # filho: LOTES (referencing)
+    relation.setReferencingLayer(lotes_layer.id())
+
+    # par de campos: RUAS.rua_id  ->  LOTES.frente_rua_id
+    relation.addFieldPair("frente_rua_id", "rua_id")
+
+    if not relation.isValid():
+        print("❌ Relação frente_rua inválida!")
+        print("   referencedLayer:", relation.referencedLayerId())
+        print("   referencingLayer:", relation.referencingLayerId())
+        print("   fieldPairs:", relation.fieldPairs())
+    else:
+        QgsProject.instance().relationManager().addRelation(relation)
+        print("✅ Relação frente_rua criada e válida")
+
+        # -------------------------------------------
+        # 2) Configurar widget RelationReference
+        # -------------------------------------------
+        form_config = lotes_layer.editFormConfig()
+
+        idx_id = lotes_layer.fields().indexFromName("frente_rua_id")
+        if idx_id != -1:
+            ew = QgsEditorWidgetSetup(
+                "RelationReference",
+                {
+                    "Relation": "frente_rua",
+                    "ShowOpenFormButton": False,
+                    "AllowAddFeatures": False,
+                    "AllowNULL": True,
+                    "MapIdentification": True,
+                    "OrderByValue": True,
+                    "FilterFields": ["name"],
+                }
+            )
+
+            lotes_layer.setEditorWidgetSetup(idx_id, ew)
+            form_config.setReadOnly(idx_id, False)
+            lotes_layer.setEditFormConfig(form_config)
+
+            print("🧰 RelationReference aplicado no campo frente_rua_id")
+
+        # -------------------------------------------
+        # 3) preencher frente_rua_nome automaticamente
+        # -------------------------------------------
+        idx_nome = lotes_layer.fields().indexFromName("frente_rua_nome")
+        if idx_nome != -1:
+            # usa o NOME REAL da camada de ruas no projeto
+            ruas_layer_name = ruas_layer.name()
+
+            expr = f"""attribute(
+                get_feature('{ruas_layer_name}','rua_id',"frente_rua_id"),
+                'name'
+            )"""
+
+            lotes_layer.setDefaultValueDefinition(
+                idx_nome, QgsDefaultValue(expr, False)
+            )
+
+            lotes_layer.setEditorWidgetSetup(
+                idx_nome,
+                QgsEditorWidgetSetup("TextEdit", {})
+            )
+
+            print("📝 frente_rua_nome configurado com expressão automática")
+
+        print("🎯 Configuração da frente em modo Identify finalizada")
+
+
+
     linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
 
     # (Opcional mas recomendado) remove arquivo anterior pra evitar erro de escrita
@@ -530,6 +773,11 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         print("❌ Erro ao salvar projeto (primeira escrita).")
         qgs.exitQgis()
         return
+    
+    #plugin_path = base_dir / "project_cloud.qml"
+    #plugin_path = project_path.with_suffix(".qml")
+    #plugin_path.write_text(QFIELD_PLUGIN_TEMPLATE, encoding="utf-8")
+    #print(f"🧩 Plugin QField criado: {plugin_path.name}")
 
     # --- Pós-processamento do .qgs para ficar compatível com o QFieldSync ---
 
@@ -545,6 +793,17 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         xml_str = text
 
     root = ET.fromstring(xml_str)
+
+    # === habilitar plugin QML para overlay no QField ===
+    # qfield_el = ET.Element("qfield")
+    # plugins_el = ET.SubElement(qfield_el, "plugins")
+    # plugin_el = ET.SubElement(plugins_el, "plugin", {
+    #     "type": "qml",
+    #     "location": "overlay"
+    # })
+    # plugin_el.text = "project_cloud.qml"
+
+    # root.append(qfield_el)
 
     # 1) Mapa de IDs das camadas a partir de <projectlayers>
     layer_ids = []  # lista na ordem
