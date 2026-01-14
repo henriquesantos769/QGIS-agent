@@ -38,7 +38,8 @@ import zipfile
 import geopandas as gpd
 from .stylize import (stylize_layer_ruas, stylize_layer_quadras, stylize_rotulos_area,
                         stylize_layer_quadras_rotulos, stylize_layer_outros,
-                        stylize_rotulos_lotes, stylize_layer_vertices)
+                        stylize_rotulos_lotes, stylize_layer_vertices, stylize_layer_segs_lotes
+                        )
 import qgis.core as qgs
 import xml.etree.ElementTree as ET
 import copy
@@ -288,6 +289,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         ("final/final_gpkg.gpkg", "Lotes"),
         ("final/lotes_rotulos.gpkg", "Lotes"),
         ("final/lotes_area_rotulos.gpkg", "Lotes"),
+        ("final/indices_segmentos.gpkg", "Lotes"),
         ("quadras/quadras_dissolve.gpkg", "Quadras"),
         ("quadras/quadras_rotulos_pt.gpkg", "Quadras"),
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
@@ -296,7 +298,6 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
     ]
 
     final_layer_obj = None
-    ruas_layer_obj = None
 
     for rel_path, nome_grupo in camadas:
         camada_path = base_dir / rel_path
@@ -352,6 +353,11 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
         elif "limitante" in rel_path.lower():
             stylize_layer_outros(layer)
+        
+        elif "indices_segmentos" in rel_path.lower():
+            stylize_layer_segs_lotes(layer)
+
+
 
         if "final_gpkg" in rel_path.lower():
             final_layer_obj = layer
@@ -521,98 +527,6 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         print(f"✅ Camada adicionada: {rel_path} | ID: {layer.id()}")
     
     print("🔧 Configurando relação frente_rua...")
-
-    # segurança
-    if final_layer_obj is None:
-        print("❌ final_layer_obj não definido — abortando relação")
-        return
-    if ruas_layer_obj is None:
-        print("❌ ruas_layer_obj não definido — abortando relação")
-        return
-
-    lotes_layer = final_layer_obj
-    ruas_layer = ruas_layer_obj
-
-    ruas_layer.setCustomProperty("identify/format", "Value")
-    ruas_layer.setCustomProperty("QFieldSync/cloud_action", "copy")
-    
-    # -------------------------------------------
-    # 1) Criar a relação formal no projeto
-    # -------------------------------------------
-    relation = QgsRelation()
-    relation.setId("frente_rua")
-    relation.setName("frente_rua")
-
-    # pai: RUAS   (referenced)
-    relation.setReferencedLayer(ruas_layer.id())
-    # filho: LOTES (referencing)
-    relation.setReferencingLayer(lotes_layer.id())
-
-    # par de campos: RUAS.rua_id  ->  LOTES.frente_rua_id
-    relation.addFieldPair("frente_rua_id", "rua_id")
-
-    if not relation.isValid():
-        print("❌ Relação frente_rua inválida!")
-        print("   referencedLayer:", relation.referencedLayerId())
-        print("   referencingLayer:", relation.referencingLayerId())
-        print("   fieldPairs:", relation.fieldPairs())
-    else:
-        QgsProject.instance().relationManager().addRelation(relation)
-        print("✅ Relação frente_rua criada e válida")
-
-        # -------------------------------------------
-        # 2) Configurar widget RelationReference
-        # -------------------------------------------
-        form_config = lotes_layer.editFormConfig()
-
-        idx_id = lotes_layer.fields().indexFromName("frente_rua_id")
-        if idx_id != -1:
-            ew = QgsEditorWidgetSetup(
-                "RelationReference",
-                {
-                    "Relation": "frente_rua",
-                    "ShowOpenFormButton": False,
-                    "AllowAddFeatures": False,
-                    "AllowNULL": True,
-                    "MapIdentification": True,
-                    "OrderByValue": True,
-                    "FilterFields": ["name"],
-                }
-            )
-
-            lotes_layer.setEditorWidgetSetup(idx_id, ew)
-            form_config.setReadOnly(idx_id, False)
-            lotes_layer.setEditFormConfig(form_config)
-
-            print("🧰 RelationReference aplicado no campo frente_rua_id")
-
-        # -------------------------------------------
-        # 3) preencher frente_rua_nome automaticamente
-        # -------------------------------------------
-        idx_nome = lotes_layer.fields().indexFromName("frente_rua_nome")
-        if idx_nome != -1:
-            # usa o NOME REAL da camada de ruas no projeto
-            ruas_layer_name = ruas_layer.name()
-
-            expr = f"""attribute(
-                get_feature('{ruas_layer_name}','rua_id',"frente_rua_id"),
-                'name'
-            )"""
-
-            lotes_layer.setDefaultValueDefinition(
-                idx_nome, QgsDefaultValue(expr, False)
-            )
-
-            lotes_layer.setEditorWidgetSetup(
-                idx_nome,
-                QgsEditorWidgetSetup("TextEdit", {})
-            )
-
-            print("📝 frente_rua_nome configurado com expressão automática")
-
-        print("🎯 Configuração da frente em modo Identify finalizada")
-
-
 
     linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
 

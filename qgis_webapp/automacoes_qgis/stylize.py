@@ -327,3 +327,50 @@ def stylize_layer_vertices(layer):
     layer.triggerRepaint()
 
     print("✨ Vértices estilizados com rótulos visíveis (P01, P02...).")
+
+def stylize_layer_segs_lotes(layer):
+    if not layer or not layer.isValid():
+        print("❌ Camada inválida para estilização.")
+        return
+
+    print("🎨 Aplicando estilo na camada de segmentos...")
+
+    # ===================== ESTILO DAS LINHAS =====================
+    symbol = QgsLineSymbol.createSimple({
+        'color': "#E67E22",   # laranja queimado (diferencia bem de rua e lote)
+        'width': '0.0',
+        'penstyle': 'solid'
+    })
+    layer.renderer().setSymbol(symbol)
+
+    # ===================== CONFIGURAÇÃO DE RÓTULOS =====================
+    label_settings = QgsPalLayerSettings()
+    text_format = QgsTextFormat()
+
+    text_format.setFont(QFont("Arial", 10))
+    text_format.setSize(9)
+    text_format.setColor(QColor("#000000"))
+    text_format.setSizeUnit(QgsUnitTypes.RenderPoints)
+
+    # ---------- BUFFER (contorno branco melhora leitura em campo) ----------
+    buffer = text_format.buffer()
+    buffer.setEnabled(True)
+    buffer.setColor(QColor("#FFFFFF"))
+    buffer.setSize(1)
+    buffer.setSizeUnit(QgsUnitTypes.RenderPoints)
+    text_format.setBuffer(buffer)
+
+    label_settings.setFormat(text_format)
+
+    # texto: apenas o segment_id
+    label_settings.fieldName = "segment_id"
+    label_settings.placement = QgsPalLayerSettings.Line
+    label_settings.placementFlags = QgsPalLayerSettings.AboveLine
+
+    labeling = QgsVectorLayerSimpleLabeling(label_settings)
+    layer.setLabeling(labeling)
+    layer.setLabelsEnabled(True)
+
+    layer.triggerRepaint()
+
+    print("✅ Estilização aplicada.")

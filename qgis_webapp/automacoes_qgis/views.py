@@ -13,7 +13,8 @@ from .pipeline import (
     singlepart_quadras, atribuir_letras_quadras, gerar_pontos_rotulo, join_lotes_quadras,
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
     converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, criar_camada_linhas,
-    gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm, gerar_vertices_quadras
+    gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm, gerar_vertices_quadras,
+    gerar_segmentos_lotes
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -119,7 +120,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "limitante": upload_dir / "limitante" / "limitante.gpkg",
             "lotes_rotulos" : upload_dir / "final" / "lotes_rotulos.gpkg",
             "final_gpkg": upload_dir / "final" / "final_gpkg.gpkg",
-            "area_rotulos": upload_dir / "final" / "lotes_area_rotulos.gpkg"
+            "area_rotulos": upload_dir / "final" / "lotes_area_rotulos.gpkg",
+            "indices_segmentos": upload_dir / "final" / "indices_segmentos.gpkg"
         }
 
         for p in paths.values():
@@ -175,6 +177,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         atualizar_progresso_thread(session_key, 13, "🧩 Numerando lotes...")
         lotes_join = numerar_lotes(lotes_join, paths["arquivo_final"])
         gerar_pontos_area_lotes(lotes_join, paths["area_rotulos"])
+        segmentos = gerar_segmentos_lotes(lotes_join, paths["indices_segmentos"])
 
         atualizar_progresso_thread(session_key, 14, "🧩 Extraindo ruas do OpenStreetMap...")
         try:

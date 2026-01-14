@@ -1076,7 +1076,17 @@ def _memorial_lote_completo(
                 best_d, best_i = d, i
         return best_i
 
-    idx_frente = idx_segmento_por_ponto(coords, P_frente) or 0
+    # idx_frente = idx_segmento_por_ponto(coords, P_frente) or 0
+    idx_frente = row.get("frente_rua_id")
+    if not idx_frente:
+        idx_frente = idx_segmento_por_ponto(coords, P_frente) or 0
+    else:
+        try:
+            idx_frente = int(idx_frente)
+        except:
+            idx_frente = 0
+
+
     lados = classificar_lados_por_frente(coords, idx_frente)
 
     # parâmetros (iguais à sua lógica)
@@ -1222,6 +1232,10 @@ def _memorial_lote_completo(
         frase_deflexao = deflexao(k)
 
         if k == 0:
+            frente = row.get("frente_rua_nome") or None
+            if frente is not None:
+                confronto = frente
+
             texto = (
                 f"Para quem de dentro do lote {lote} olha para {confronto}, "
                 f"inicia-se a descrição na coordenada {coord1}, "

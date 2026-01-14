@@ -1,7 +1,9 @@
 from qgis.core import (
     QgsApplication, QgsVectorLayer, QgsVectorFileWriter, QgsField,
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes, QgsSpatialIndex
+    QgsCoordinateTransformContext, QgsRasterLayer, QgsWkbTypes, QgsSpatialIndex,
+    QgsGeometry, QgsPointXY,
+    QgsProject, QgsFeature
 )
 from qgis.PyQt.QtCore import QVariant
 from qgis.analysis import QgsNativeAlgorithms
@@ -47,6 +49,12 @@ def save_layer(layer: QgsVectorLayer, file_path: Path, driver="ESRI Shapefile", 
     if err != QgsVectorFileWriter.NoError:
         raise RuntimeError(f"Falha ao salvar '{file_path}': {msg}")
     return file_path
+
+def calcular_azimute(p1, p2):
+    dx = p2.x() - p1.x()
+    dy = p2.y() - p1.y()
+    ang = math.degrees(math.atan2(dx, dy))
+    return (ang + 360) % 360
 
 def gerar_vertices_quadras(
     upload_dir: Path,
@@ -382,6 +390,111 @@ def criar_camada_linhas(
 
     return final_layer
 
+def gerar_segmentos_lotes(lotes_layer: QgsVectorLayer, output_path: Path, crs=None):
+    """
+    Gera uma camada de segmentos (frentes) a partir da camada de lotes
+    e salva em GPKG usando a função save_layer() do projeto.
+    """
+    if not lotes_layer or not lotes_layer.isValid():
+        raise RuntimeError("Camada de lotes inválida em gerar_segmentos_lotes().")
+
+    print("🔧 Gerando camada de segmentos dos lotes...")
+
+    def _to_int(value):
+        if value is None:
+            return None
+        # trata QVariant
+        if hasattr(value, "toString"):
+            value = value.toString()
+        # tenta converter literal
+        try:
+            return int(value)
+        except:
+            return None
+
+    if crs is None:
+        crs = lotes_layer.crs().authid()
+
+    seg_layer = QgsVectorLayer(f"LineString?crs={crs}", "frentes_segmentos", "memory")
+    prov = seg_layer.dataProvider()
+
+    prov.addAttributes([
+        QgsField("lote_num", QVariant.Int),
+        QgsField("segment_id", QVariant.Int),
+        QgsField("comprimento", QVariant.Double),
+        QgsField("azimute", QVariant.Double),
+    ])
+    seg_layer.updateFields()
+
+    for lot_feat in lotes_layer.getFeatures():
+        geom: QgsGeometry = lot_feat.geometry()
+        if geom is None or geom.isEmpty():
+            continue
+
+        # pega id do lote (ajuste se o nome do campo for outro)
+        lote_num = lot_feat["lote_num"]
+
+        rings = []
+
+        # Garantir que estamos tratando polígonos
+        if QgsWkbTypes.geometryType(geom.wkbType()) != QgsWkbTypes.PolygonGeometry:
+            # se aparecer linha/ponto aqui, ignoramos
+            continue
+
+        if QgsWkbTypes.isMultiType(geom.wkbType()):
+            # MultiPolígono: lista de polígonos, cada um com seus anéis
+            multipoly = geom.asMultiPolygon()
+            for poly in multipoly:
+                for ring in poly:  # ring = lista de vértices
+                    rings.append(ring)
+        else:
+            # Polígono simples: lista de anéis
+            poly = geom.asPolygon()
+            for ring in poly:
+                rings.append(ring)
+
+        # agora percorremos todos os anéis do lote
+        seg_index = 0  # segment_id por lote
+        for ring in rings:
+            n = len(ring)
+            if n < 2:
+                continue
+
+            # em asPolygon/asMultiPolygon, o primeiro ponto normalmente se repete no final
+            # então usamos até n-1 para não duplicar o segmento de fechamento
+            for i in range(n - 1):
+                p1 = QgsPointXY(ring[i])
+                p2 = QgsPointXY(ring[i + 1])
+                seg_geom = QgsGeometry.fromPolylineXY([p1, p2])
+
+                comprimento = seg_geom.length()
+                az = calcular_azimute(p1, p2)
+
+                feat = QgsFeature(seg_layer.fields())
+                feat.setAttribute("lote_num", _to_int(lote_num))
+                feat.setAttribute("segment_id", seg_index)
+                feat.setAttribute("comprimento", float(comprimento))
+                feat.setAttribute("azimute", float(az))
+                feat.setGeometry(seg_geom)
+
+                prov.addFeature(feat)
+                seg_index += 1
+
+    seg_layer.updateExtents()
+
+    # 💾 Salvar em GPKG usando seu helper
+    print(f"💾 Salvando camada de segmentos em: {output_path}")
+    save_layer(
+        seg_layer,
+        output_path,
+        driver="GPKG",
+        layer_name="frentes_segmentos"
+    )
+
+    print("✅ Camada de segmentos gerada e salva.")
+    return seg_layer
+
+
 def corrigir_e_snap(linhas: QgsVectorLayer, paths):
     res_fix_lines = processing.run("native:fixgeometries", {
         "INPUT": linhas, "OUTPUT": str(paths["linhas_fix"])
@@ -396,7 +509,6 @@ def corrigir_e_snap(linhas: QgsVectorLayer, paths):
     linhas_snap = QgsVectorLayer(res_snap["OUTPUT"], "linhas_snap", "ogr")
     print("Linhas corrigidas e ajustadas:", linhas_snap.featureCount())
     return linhas_snap
-
 
 def linhas_para_poligonos(linhas_snap, out_path):
     res_poly = processing.run("qgis:linestopolygons", {
