@@ -411,7 +411,7 @@ def package_project_for_qfield(project_file: Path, export_folder: Path, include_
     print(f"📦 Projeto empacotado em: {export_folder}")
     return export_folder
 
-def enviar_para_qfieldcloud(session_key):
+def enviar_para_qfieldcloud(session_key, name_zip_project = None):
     atualizar_progresso_qfield_thread(
         session_key,
         "Iniciando envio para QFieldCloud..."
@@ -434,12 +434,15 @@ def enviar_para_qfieldcloud(session_key):
     # Detecta ortofoto e gera nome do projeto
     ortho_dir = base_dir / "ortofoto"
     ortho_files = list(ortho_dir.glob("*.tif"))
-    if ortho_files:
-        ortho_name = ortho_files[0].stem.replace("reduzido", "")
-        ortho_name = ortho_name.replace("Ortofoto", "").replace("ortofoto", "").strip().replace(" ", "").replace("_", "")
-        project_name = ortho_name or "Projeto_Sem_Nome"
+    if not name_zip_project  ==  None:
+        project_name = name_zip_project
     else:
-        project_name = "Projeto_Sem_Ortofoto"
+        if ortho_files:
+            ortho_name = ortho_files[0].stem.replace("reduzido", "")
+            ortho_name = ortho_name.replace("Ortofoto", "").replace("ortofoto", "").strip().replace(" ", "").replace("_", "")
+            project_name = ortho_name or "Projeto_Sem_Nome"
+        else:
+            project_name = "Projeto_Sem_Ortofoto"
 
     # 🔹 Caminho base de envio (diretório atual do usuário)
     upload_dir = base_dir
@@ -458,7 +461,7 @@ def enviar_para_qfieldcloud(session_key):
 
     # 🔹 Lista arquivos relevantes da pasta atual
     pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante", "fotos"]
-    exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs", "qml"}
+    exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs"}
     files = []
 
     for pasta in pastas_necessarias:
@@ -474,10 +477,6 @@ def enviar_para_qfieldcloud(session_key):
     project_qgs = upload_dir / "project_cloud.qgs"
     if project_qgs.exists():
         files.append(project_qgs)
-
-    project_qml = upload_dir / "project_cloud.qml"
-    if project_qml.exists():
-        files.append(project_qml)
 
     files.sort(key=lambda p: (p.suffix.lower() == ".qgs", p.as_posix()))
     total = len(files)
@@ -583,6 +582,7 @@ def enviar_projeto_zip_qfield(request):
     base_dir.mkdir(parents=True, exist_ok=True)
 
     zip_path = base_dir / zip_file.name
+    name_zip_project = str(zip_file.name).replace(".zip", "")
     with open(zip_path, "wb+") as f:
         for chunk in zip_file.chunks():
             f.write(chunk)
@@ -598,7 +598,7 @@ def enviar_projeto_zip_qfield(request):
 
     threading.Thread(
         target=enviar_para_qfieldcloud,
-        args=(request.session.session_key,),
+        args=(request.session.session_key,name_zip_project),
         daemon=True
     ).start()
 

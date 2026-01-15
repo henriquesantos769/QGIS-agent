@@ -347,16 +347,16 @@ def stylize_layer_segs_lotes(layer):
     label_settings = QgsPalLayerSettings()
     text_format = QgsTextFormat()
 
-    text_format.setFont(QFont("Arial", 10))
-    text_format.setSize(9)
-    text_format.setColor(QColor("#000000"))
+    text_format.setFont(QFont("Arial", 12))
+    text_format.setSize(12)
+    text_format.setColor(QColor("#FFF200"))
     text_format.setSizeUnit(QgsUnitTypes.RenderPoints)
 
     # ---------- BUFFER (contorno branco melhora leitura em campo) ----------
     buffer = text_format.buffer()
     buffer.setEnabled(True)
     buffer.setColor(QColor("#FFFFFF"))
-    buffer.setSize(1)
+    buffer.setSize(1.2)
     buffer.setSizeUnit(QgsUnitTypes.RenderPoints)
     text_format.setBuffer(buffer)
 
