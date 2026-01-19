@@ -387,7 +387,7 @@ function finalizarInterface(erro = false) {
     viewBtn.style.display = "inline-flex";
     // btnBaixarEnviar.style.display = "inline-flex";
     btnExportQField.style.display = "inline-flex";
-    resetBtn.style.display = "inline-flex";
+    // resetBtn.style.display = "inline-flex";
   } else {
     resetBtn.style.display = "inline-flex";
   }
@@ -401,6 +401,8 @@ startBtn.addEventListener("click", async () => {
 
   console.log("[DEBUG] 🚀 Botão 'Iniciar' clicado.");
   monitoramentoAtivo = false; // mata qualquer monitor anterior (por segurança)
+resetBtn.style.display = "inline-flex";
+resetBtn.disabled = false;
 
   // Mostra área de progresso e zera UI
   progressArea.style.display = "grid";

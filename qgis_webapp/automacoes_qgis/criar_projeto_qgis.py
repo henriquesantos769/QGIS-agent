@@ -295,6 +295,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         ("ruas/ruas_osm_detalhadas.gpkg", "Ruas"),
         ("limitante/limitante.gpkg", "Limitante"),
         ("quadras/quadras_vertices.gpkg", "Quadras"),
+        ("final/lote_rua.gpkg", "Lotes"),
     ]
 
     final_layer_obj = None

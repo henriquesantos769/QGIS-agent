@@ -494,6 +494,50 @@ def gerar_segmentos_lotes(lotes_layer: QgsVectorLayer, output_path: Path, crs=No
     print("✅ Camada de segmentos gerada e salva.")
     return seg_layer
 
+def gerar_lote_rua(caminho_lotes, caminho_ruas, saida, tolerancia=6):
+    lotes = QgsVectorLayer(str(caminho_lotes), "lotes", "ogr")
+    ruas = QgsVectorLayer(str(caminho_ruas), "ruas", "ogr")
+
+    if not lotes.isValid():
+        raise RuntimeError("Camada de lotes inválida!")
+    if not ruas.isValid():
+        raise RuntimeError("Camada de ruas inválida!")
+
+    # Criar camada de relação em memória
+    lote_rua = QgsVectorLayer("None", "lote_rua", "memory")
+    prov = lote_rua.dataProvider()
+
+    prov.addAttributes([
+        QgsField("lote_num", QVariant.String),
+        QgsField("quadra", QVariant.String),
+        QgsField("rua_id", QVariant.String),
+        QgsField("name", QVariant.String)
+    ])
+    lote_rua.updateFields()
+
+    # Iterar sobre lotes e encontrar ruas próximas
+    for lote in lotes.getFeatures():
+        geom_lote = lote.geometry()
+        lote_num = lote["lote_num"]
+        quadra = lote["quadra"]
+
+        for rua in ruas.getFeatures():
+            geom_rua = rua.geometry()
+            rua_id = rua["rua_id"]
+            rua_name = rua["name"]
+
+            largura_rua = tolerancia # ou renomeie se quiser
+            rua_buffer = geom_rua.buffer(largura_rua, 6)
+
+            # usa distância geométrica
+            if rua_buffer.intersects(geom_lote):
+                f = QgsFeature()
+                f.setAttributes([str(lote_num), quadra, str(rua_id), rua_name])
+                prov.addFeature(f)
+
+    # Salvar
+    save_layer(lote_rua, saida, driver="GPKG")
+    print(f"📍 Lote-Rua gerado com sucesso: {saida}")
 
 def corrigir_e_snap(linhas: QgsVectorLayer, paths):
     res_fix_lines = processing.run("native:fixgeometries", {

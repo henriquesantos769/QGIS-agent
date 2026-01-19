@@ -14,7 +14,7 @@ from .pipeline import (
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
     converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, criar_camada_linhas,
     gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm, gerar_vertices_quadras,
-    gerar_segmentos_lotes
+    gerar_lote_rua, gerar_segmentos_lotes
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -46,6 +46,11 @@ def atualizar_progresso(request, etapa, mensagem):
     request.session["progresso"] = progresso
     request.session.modified = True
     print(f"📊 [{etapa}] {mensagem}")
+
+def pipeline_cancelado(session_key):
+    session = Session.objects.get(session_key=session_key)
+    data = session.get_decoded()
+    return data.get("cancelado", False)
 
 def atualizar_progresso_qfield(request, mensagem):
     request.session["progresso_qfield"] = {
@@ -93,6 +98,7 @@ def home(request):
 def resetar_progresso(request):
     request.session["progresso"] = {"etapa": 0, "mensagem": "Aguardando início"}
     request.session["aguardando_ruas"] = False
+    request.session["cancelado"] = True
     request.session["base_dir"] = None
     request.session.modified = True
     request.session.save()
@@ -102,6 +108,12 @@ def resetar_progresso(request):
 
 def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
     try:
+        def check_cancel(session_key, etapa_desc="Operação"):
+            if pipeline_cancelado(session_key):
+                print(f"🛑 Pipeline cancelado durante: {etapa_desc}")
+                atualizar_progresso_thread(session_key, 99, f"🛑 Cancelado durante: {etapa_desc}")
+                raise InterruptedError("Pipeline cancelado pelo usuário")
+
         paths = {
             "linhas": upload_dir / "lotes_linhas" / "lotes_linhas.shp",
             "linhas_fix": upload_dir / "temp" / "linhas_fix.shp",
@@ -121,12 +133,15 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "lotes_rotulos" : upload_dir / "final" / "lotes_rotulos.gpkg",
             "final_gpkg": upload_dir / "final" / "final_gpkg.gpkg",
             "area_rotulos": upload_dir / "final" / "lotes_area_rotulos.gpkg",
-            "indices_segmentos": upload_dir / "final" / "indices_segmentos.gpkg"
+            "indices_segmentos": upload_dir / "final" / "indices_segmentos.gpkg",
+            "ruas_osm_detalhadas": upload_dir / "ruas" / "ruas_osm_detalhadas.gpkg",
+            "lote_rua": upload_dir / "final" / "lote_rua.gpkg"
         }
 
         for p in paths.values():
             p.parent.mkdir(parents=True, exist_ok=True)
 
+        check_cancel(session_key, "Conversão DXF → Shapefile")
         atualizar_progresso_thread(session_key, 3, "🔧 Convertendo DXF em camadas vetoriais...")
         linhas = dxf_to_shp(dxf_path, paths["linhas"])
 
@@ -136,49 +151,62 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         print("CRS DETECTADO:", crs_str, "Fuso UTM:", fuso)
 
         #atualizar_progresso_thread(session_key, 4, "🔧 Gerando camada de confrontações...")
+        check_cancel(session_key, "Criação da camada de limites")
         outros = criar_camada_linhas(
             file_path=paths["limitante"],
             crs_epsg=crs_str,
             layer_name="Limites do Lote"
         )
 
+        check_cancel(session_key, "Corrigindo e aplicando snap")
         atualizar_progresso_thread(session_key, 4, "🧩 Corrigindo e aplicando snap...")
         linhas_fix = corrigir_e_snap(linhas, paths)
 
+        check_cancel(session_key, "Gerando polígonos de lotes")
         atualizar_progresso_thread(session_key, 5, "🏠 Gerando polígonos de lotes...")
         lotes_poly = linhas_para_poligonos(linhas_fix, paths["lotes_poly"])
 
+        check_cancel(session_key, "Corrigindo geometrias dos lotes")
         atualizar_progresso_thread(session_key, 6, "🧼 Corrigindo geometrias dos lotes...")
         lotes_fix = corrigir_geometrias(lotes_poly, paths["lotes_fix"])
 
+        check_cancel(session_key, "Dissolvendo quadras e atribuindo letras")
         quadras_dissolve = dissolve_para_quadras(lotes_fix, paths["quadras_dissolve_temp"])
         quadras_dissolve_num = atribuir_letras_quadras(quadras_dissolve, paths["quadras_dissolve_gpkg"])
 
+        check_cancel(session_key, "Gerando buffers dos lotes")
         atualizar_progresso_thread(session_key, 7, "🗂️ Gerando buffers dos lotes...")
         lotes_buffer = buffer_lotes(lotes_fix, paths["lotes_buffer"])
 
+        check_cancel(session_key, "Criando polígonos das quadras")
         atualizar_progresso_thread(session_key, 8, "🧩 Dissolvendo lotes para criar polígonos das quadras...")
         quadras_raw = dissolve_para_quadras(lotes_buffer, paths["quadras_raw"])
-
+        
+        check_cancel(session_key, "Criando polígonos das quadras")
         atualizar_progresso_thread(session_key, 9, "🧩 Criando polígonos das quadras...")
         quadras = singlepart_quadras(quadras_raw, paths["quadras_single2"])
 
+        check_cancel(session_key, "Atribuindo letras às quadras")
         atualizar_progresso_thread(session_key, 10, "🧩 Atribuindo letras às quadras...")
         quadras = atribuir_letras_quadras(quadras, paths["quadras_single"], driver="ESRI Shapefile")
 
+        check_cancel(session_key, "Gerando pontos de rótulo das quadras")
         atualizar_progresso_thread(session_key, 11, "🗂️ Gerando pontos de rótulo das quadras...")
         gerar_pontos_rotulo(quadras, paths["quadras_pts"])
 
         gerar_vertices_quadras(upload_dir)
 
+        check_cancel(session_key, "Juntando lotes e quadras")
         atualizar_progresso_thread(session_key, 12, "🏠 Juntando lotes e quadras...")
         lotes_join = join_lotes_quadras(lotes_fix, quadras, paths["lotes_join"])
 
+        check_cancel(session_key, "Numerando lotes")
         atualizar_progresso_thread(session_key, 13, "🧩 Numerando lotes...")
         lotes_join = numerar_lotes(lotes_join, paths["arquivo_final"])
         gerar_pontos_area_lotes(lotes_join, paths["area_rotulos"])
         segmentos = gerar_segmentos_lotes(lotes_join, paths["indices_segmentos"])
 
+        check_cancel(session_key, "Extraindo ruas do OpenStreetMap")
         atualizar_progresso_thread(session_key, 14, "🧩 Extraindo ruas do OpenStreetMap...")
         try:
             extrair_ruas_overpass(quadras, upload_dir, DEFAULT_CRS=crs_str)
@@ -199,14 +227,21 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         session.session_data = Session.objects.encode(data)
         session.save()
 
+        check_cancel(session_key, "Atribuindo ruas e detectando lotes de esquina")
         atualizar_progresso_thread(session_key, 15, "🏷️ Atribuindo ruas e detectando lotes de esquina...")
         atribuir_ruas_e_esquinas_precision(upload_dir, epsg_lotes=crs_int)
         gerar_pontos_rotulo_lotes(paths['final_gpkg'], paths["lotes_rotulos"])
+        gerar_lote_rua(paths['final_gpkg'], paths["ruas_osm_detalhadas"], paths["lote_rua"])
 
+        check_cancel(session_key, "Criando GeoPackage final")
         atualizar_progresso_thread(session_key, 16, "🗺️ Criando projeto QGIS final...")
         create_final_project(upload_dir, ortho_path=ortho_path, DEFAULT_CRS=crs_str)
 
         atualizar_progresso_thread(session_key, 17, "✅ Projeto QGIS criado com sucesso!")
+
+    except InterruptedError:
+        print("🛑 Pipeline interrompido com sucesso.")
+        return
 
     except Exception as e:
         atualizar_progresso_thread(session_key, 99, f"❌ Erro geral: {e}")
@@ -221,6 +256,7 @@ def criar_projeto_qgis(request):
     request.session["progresso"] = {"etapa": 0, "mensagem": "Aguardando início"}
     request.session["aguardando_ruas"] = False
     request.session["base_dir"] = None
+    request.session["cancelado"] = False
     request.session.modified = True
 
     request.session.save()
