@@ -527,6 +527,27 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         group.addLayer(layer)
         print(f"✅ Camada adicionada: {rel_path} | ID: {layer.id()}")
     
+    lote_rua_layer = QgsProject.instance().mapLayersByName("lote_rua")[0]
+
+    setup = QgsEditorWidgetSetup(
+        "ValueRelation",
+        {
+            "Layer": lote_rua_layer.id(),
+            "Key": "name",
+            "Value": "name",
+            "FilterExpression": "\"lote_num\" = current_value('lote_num') AND \"quadra\" = current_value('quadra')",
+            "AllowNull": True,
+            "OrderByValue": True,
+            "UseCompleter": False,
+            "AllowMulti": False
+        }
+    )
+
+    final_layer_obj.setEditorWidgetSetup(
+        final_layer_obj.fields().lookupField("frente_rua_nome"),
+        setup
+    )
+
     print("🔧 Configurando relação frente_rua...")
 
     linhas_path = base_dir / "final" / "lotes_segmentos.gpkg"
