@@ -377,6 +377,8 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 ("STATUS", QVariant.String),
                 ("quadra", QVariant.String),
                 ("lote_num", QVariant.String),
+                ("observação", QVariant.String),
+                ("código", QVariant.String),
                 ("foto", QVariant.String),
                 ("frente_rua_nome", QVariant.String),
                 ("frente_rua_id", QVariant.Int),
@@ -469,8 +471,11 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                     "IMÓVEIS CONFERIDOS": "IMÓVEIS CONFERIDOS",
                     "IMÓVEIS PENDENTES": "IMÓVEIS PENDENTES",
                     "OUTROS": "OUTROS",
+                    "Sem STATUS": "Sem STATUS",
                 }
-                widget = QgsEditorWidgetSetup("ValueMap", {"map": value_map})
+                widget = QgsEditorWidgetSetup("ValueMap", {
+                    "map": value_map
+                })
                 layer.setEditorWidgetSetup(status_idx, widget)
                 form_config.setReadOnly(status_idx, False)
 
@@ -493,6 +498,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                     "IMÓVEIS CONFERIDOS": QColor("#24eb32"),
                     "IMÓVEIS PENDENTES": QColor("#e3242b"),
                     "OUTROS": QColor("#1f75fe"),
+                    "Sem STATUS": QColor("#EBF400"),
                 }
 
                 for status, color in color_map.items():

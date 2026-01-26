@@ -13,6 +13,7 @@ from django.views.decorators.cache import never_cache
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 
+from .export_utils import (gerar_planilha_area_quadras_xlsx, gerar_planilha_area_quadras_prepare, exportar_tabela_coordenadas_quadras, gerar_tabela_coordenadas_excel)
 
 # ---------------------------------------------------------
 # 📊 Progresso (session-based)
@@ -178,6 +179,13 @@ def gerar_memoriais(request):
 @csrf_exempt
 def baixar_memoriais(request):
     base_dir = request.session.get("base_dir")
+    json_path = gerar_planilha_area_quadras_prepare(base_dir)
+    xlsx = gerar_planilha_area_quadras_xlsx(json_path)
+    json_path_tabela_coordenadas = exportar_tabela_coordenadas_quadras(base_dir)
+    xlsx_tabela_coordenadas = gerar_tabela_coordenadas_excel(json_path_tabela_coordenadas)
+    print("XLSX gerado:", xlsx)
+    print("XLSX tabela coordenadas gerado:", xlsx_tabela_coordenadas)
+
     if not base_dir:
         return JsonResponse({
             "status": "erro",
@@ -194,6 +202,9 @@ def baixar_memoriais(request):
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         for file in memoriais_dir.glob("*.docx"):
+            zipf.write(file, arcname=file.name)
+
+        for file in memoriais_dir.glob("*.xlsx"):
             zipf.write(file, arcname=file.name)
 
     buffer.seek(0)

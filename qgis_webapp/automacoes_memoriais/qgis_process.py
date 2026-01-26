@@ -17,7 +17,6 @@ from processing.core.Processing import Processing
 
 # ---------------------------------------------------------
 # 📌 IMPORTA SEU PIPELINE
-# (ajuste o import se o arquivo estiver em outro local)
 # ---------------------------------------------------------
 from pipeline import (
     atribuir_ruas_frente,
@@ -30,7 +29,6 @@ from pipeline import (
     segmentar_quadra_com_confrontantes,
     calcular_deflexoes_segmentos
 )
-
 
 def init_qgis():
     QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH"), True)
@@ -186,14 +184,17 @@ def main():
         calcular_deflexoes_segmentos(out_dir)
         gerar_memorial_quadras_docx(out_dir, fuso=fuso, epsg_default=int(crs.split(":")[1]))
 
-        write_progress(out_dir, 20, "✅ Processamento concluído com sucesso")
 
+        write_progress(out_dir, 20, "✅ Processamento concluído!")
+        
+    
     except Exception as e:
         write_progress(out_dir, 99, f"❌ Erro: {e}")
         raise
 
     finally:
-        qgs.exitQgis()
+        if qgs:
+            qgs.exitQgis()
 
 
 # ---------------------------------------------------------

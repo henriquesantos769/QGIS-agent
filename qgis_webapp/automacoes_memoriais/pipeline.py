@@ -25,8 +25,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import os
 import pandas as pd
 
-Processing.initialize()
-QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
+# Processing.initialize()
+# QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
 
 def obter_fuso_por_epsg(crs):
     auth = crs.authid()  # ex: "EPSG:31983"
@@ -1958,3 +1958,4 @@ def gerar_memorial_quadras_docx(
     print("Memorial de quadras gerado com sucesso!")
     print("Arquivo:", out_path)
     return out_path
+
