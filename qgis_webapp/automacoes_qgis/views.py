@@ -14,7 +14,7 @@ from .pipeline import (
     numerar_lotes, corrigir_geometrias, buffer_lotes, extrair_ruas_overpass, create_final_gpkg,
     converter_ecw_para_tif_reduzido, atribuir_ruas_e_esquinas_precision, criar_camada_linhas,
     gerar_pontos_rotulo_lotes, gerar_pontos_area_lotes, detectar_fuso_utm, gerar_vertices_quadras,
-    gerar_lote_rua, gerar_segmentos_lotes
+    gerar_lote_rua, gerar_segmentos_lotes, separar_perimetro_maior_poligono
 )
 from .qgis_setup import init_qgis
 from io import BytesIO
@@ -131,6 +131,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
             "arquivo_final": upload_dir / "final" / "final.shp",
             "limitante": upload_dir / "limitante" / "limitante.gpkg",
             "lotes_rotulos" : upload_dir / "final" / "lotes_rotulos.gpkg",
+            "perimetro": upload_dir / "perimetro" / "perimetro.gpkg",
+            "lotes_sem_perimetro": upload_dir / "lotes_poligonos" / "lotes_sem_perimetro.gpkg",
             "final_gpkg": upload_dir / "final" / "final_gpkg.gpkg",
             "area_rotulos": upload_dir / "final" / "lotes_area_rotulos.gpkg",
             "indices_segmentos": upload_dir / "final" / "indices_segmentos.gpkg",
@@ -146,6 +148,8 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         linhas = dxf_to_shp(dxf_path, paths["linhas"])
 
         fuso, crs_int = detectar_fuso_utm(dxf_path)
+        # fuso = 23
+        # crs_int = 31983
         crs_str = f"EPSG:{crs_int}"
         crs_all = QgsCoordinateReferenceSystem(crs_str)
         print("CRS DETECTADO:", crs_str, "Fuso UTM:", fuso)
@@ -169,6 +173,13 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         check_cancel(session_key, "Corrigindo geometrias dos lotes")
         atualizar_progresso_thread(session_key, 6, "🧼 Corrigindo geometrias dos lotes...")
         lotes_fix = corrigir_geometrias(lotes_poly, paths["lotes_fix"])
+
+        perimetro_layer, lotes_fix = separar_perimetro_maior_poligono(
+            lotes_fix,
+            fator_minimo=3.0,
+            salvar_perimetro_em=paths["perimetro"],
+            salvar_lotes_em=paths["lotes_sem_perimetro"]
+        )
 
         check_cancel(session_key, "Dissolvendo quadras e atribuindo letras")
         quadras_dissolve = dissolve_para_quadras(lotes_fix, paths["quadras_dissolve_temp"])
@@ -301,7 +312,7 @@ def criar_projeto_qgis(request):
             try:
                 atualizar_progresso(request, 2.5, "🧩 Convertendo ortofoto ECW para TIFF reduzido (pode demorar)...")
                 # ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=96)
-                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=70)
+                ortho_path = converter_ecw_para_tif_reduzido(ortho_path, escala=2)
                 print(f"✅ Ortofoto convertida automaticamente: {ortho_path.name}")
             except Exception as e:
                 print(f"⚠️ Erro ao converter ECW: {e}")
@@ -387,7 +398,7 @@ def download_pacote_zip(request):
         return HttpResponse("Projeto QGIS não encontrado. Gere o projeto antes.")
 
     export_folder = upload_dir / "qfield_export"
-    include_data_folders = ["final", "ruas", "quadras", "ortofoto", "limitante"]
+    include_data_folders = ["final", "ruas", "quadras", "ortofoto", "limitante", "perimetro"]
 
     try:
         package_project_for_qfield(

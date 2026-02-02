@@ -26,7 +26,7 @@ from pipeline import (
     gerar_memorial_quadras_docx,
     obter_fuso_por_epsg,
     gerar_geometrias_quadras,
-    segmentar_quadra_com_confrontantes,
+    segmentar_entidade_com_confrontantes,
     calcular_deflexoes_segmentos
 )
 
@@ -176,13 +176,39 @@ def main():
         calcular_medidas_e_azimutes(out_dir, epsg_lotes=int(crs.split(":")[1]))
 
         write_progress(out_dir, 16, "📝 Gerando memoriais dos lotes...")
-        gerar_memoriais_em_lote(out_dir)
+        # gerar_memoriais_em_lote(out_dir)
 
         write_progress(out_dir, 18, "📝 Gerando memoriais das quadras...")
+
         gerar_geometrias_quadras(out_dir, epsg_lotes=int(crs.split(":")[1]))
-        segmentar_quadra_com_confrontantes(out_dir)
-        calcular_deflexoes_segmentos(out_dir)
+        segmentar_entidade_com_confrontantes(out_dir,
+                                             entidades_path=out_dir / "final" / "quadras_contorno.gpkg",
+                                             ruas_path=out_dir / "ruas" / "ruas_osm_detalhadas.gpkg",
+                                             id_field="quadra",
+                                             outros_path=out_dir / "limitante" / "limitante.gpkg",
+                                             out_gpkg=out_dir / "final" / "quadras_segmentos.gpkg",
+                                             espg_entidades=int(crs.split(":")[1]))
+                                             
+        # calcular_deflexoes_segmentos(seg_gpkg=out_dir / "final" / "quadras_segmentos.gpkg")
         gerar_memorial_quadras_docx(out_dir, fuso=fuso, epsg_default=int(crs.split(":")[1]))
+
+        segmentar_entidade_com_confrontantes(out_dir,
+                                             entidades_path=out_dir / "perimetro" / "perimetro.gpkg",
+                                             ruas_path=out_dir / "ruas" / "ruas_osm_detalhadas.gpkg",
+                                             id_field="perimetro",
+                                             nome_entidade="None",
+                                             outros_path=out_dir / "limitante" / "limitante.gpkg",
+                                             out_gpkg=out_dir / "final" / "perimetro_segmentos.gpkg",
+                                             espg_entidades=int(crs.split(":")[1]))
+
+        # calcular_deflexoes_segmentos(seg_gpkg= out_dir / "final" / "perimetro_segmentos.gpkg")
+
+        gerar_memorial_quadras_docx(out_dir,
+                                    arquivo_segmentos='perimetro_segmentos.gpkg',
+                                    fuso=fuso, 
+                                    epsg_default=int(crs.split(":")[1]),
+                                    saida_nome='perimetro_memorial.docx'
+                                    )
 
 
         write_progress(out_dir, 20, "✅ Processamento concluído!")

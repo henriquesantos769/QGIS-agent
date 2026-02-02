@@ -37,7 +37,7 @@ from qgis.PyQt.QtCore import QVariant
 import zipfile
 import geopandas as gpd
 from .stylize import (stylize_layer_ruas, stylize_layer_quadras, stylize_rotulos_area,
-                        stylize_layer_quadras_rotulos, stylize_layer_outros,
+                        stylize_layer_quadras_rotulos, stylize_layer_outros, stylize_layer_perimetro,
                         stylize_rotulos_lotes, stylize_layer_vertices, stylize_layer_segs_lotes
                         )
 import qgis.core as qgs
@@ -53,137 +53,6 @@ from qgis.analysis import QgsNativeAlgorithms
 
 # CRS padrão (SIRGAS 2000 / UTM 22S)
 project_crs = QgsCoordinateReferenceSystem("EPSG:31982")
-
-QFIELD_PLUGIN_TEMPLATE = r"""
-import QtQuick
-import org.qfield
-import Theme
-
-Item {
-    id: root
-
-    property var mainWindow: iface.mainWindow()
-    property var mapCanvas: iface.mapCanvas()
-
-    property bool selectingFrontStreet: false
-
-    property string ruasLayerName: "Ruas"
-    property string ruaNameField: "name"
-    property string loteFieldRuaId: "frente_rua_id"
-    property string loteFieldRuaNome: "frente_rua_nome"
-
-    QfToolButton {
-        id: frontStreetButton
-        iconSource: Theme.getThemeVectorIcon("ic_info_white_24dp")
-        iconColor: "white"
-        round: true
-        property color activeColor: "#2196f3"
-        property color inactiveColor: "#444444"
-        bgcolor: selectingFrontStreet ? activeColor : inactiveColor
-
-        onClicked: {
-            selectingFrontStreet = !selectingFrontStreet
-            if (selectingFrontStreet) {
-                // LEGACY API QUE FUNCIONA EM ANDROID
-                mainWindow.setMode("identify")
-                mainWindow.displayToast("Modo frente: toque na RUA")
-            } else {
-                mainWindow.setMode("pan")
-                mainWindow.displayToast("Modo frente desativado")
-            }
-        }
-    }
-
-    Component.onCompleted: {
-        iface.addItemToPluginsToolbar(frontStreetButton)
-        mainWindow.displayToast("Plugin de frente carregado")
-
-        pointHandler.registerHandler("select_front_street", function(point, type, interactionType) {
-            if (!selectingFrontStreet)
-                return false
-
-            // aqui vamos logar pra descobrir o evento real
-            mainWindow.displayToast("EVENT: " + interactionType)
-
-            if (interactionType === "clicked"
-                || interactionType === "tap"
-                || interactionType === "press") {
-                return handleFrontStreetTap(point)
-            }
-
-            return false
-        })
-
-        pointHandler.setMapInteractionEnabled(true)
-    }
-
-    function currentFeatureDrawer() {
-        var items = iface.uiItems()
-        for (var i = 0; i < items.length; i++)
-            if (items[i].featureModel)
-                return items[i]
-        return null
-    }
-
-    function handleFrontStreetTap(point) {
-        mainWindow.displayToast("Toque detectado")
-
-        var drawer = currentFeatureDrawer()
-        if (!drawer || !drawer.featureModel) {
-            mainWindow.displayToast("Abra o lote primeiro")
-            mainWindow.setMode("pan")
-            selectingFrontStreet = false
-            return true
-        }
-
-        var loteFeature = drawer.featureModel.feature
-        if (!loteFeature) {
-            mainWindow.displayToast("Nenhum lote ativo")
-            return true
-        }
-
-        var px = 20
-        var tl = mapCanvas.mapSettings.screenToCoordinate(Qt.point(point.x - px, point.y - px))
-        var br = mapCanvas.mapSettings.screenToCoordinate(Qt.point(point.x + px, point.y + px))
-        var rectangle = GeometryUtils.createRectangleFromPoints(tl, br)
-
-        var ruasLayers = qgisProject.mapLayersByName(ruasLayerName)
-        if (!ruasLayers || ruasLayers.length === 0) {
-            mainWindow.displayToast("Camada 'Ruas' não encontrada")
-            return true
-        }
-
-        var it = LayerUtils.createFeatureIteratorFromRectangle(ruasLayers[0], rectangle)
-        if (!it.hasNext()) {
-            mainWindow.displayToast("Nenhuma rua nesse ponto")
-            return true
-        }
-
-        var rua = it.next()
-        var ruaId = rua.id
-        var ruaNome = rua.attribute(ruaNameField)
-
-        var idxNome = loteFeature.fields.names.indexOf(loteFieldRuaNome)
-        var idxId = loteFeature.fields.names.indexOf(loteFieldRuaId)
-
-        if (idxNome < 0 || idxId < 0) {
-            mainWindow.displayToast("Campos frente_rua_* faltando")
-            return true
-        }
-
-        loteFeature.setAttribute(idxId, ruaId)
-        loteFeature.setAttribute(idxNome, ruaNome)
-        drawer.featureModel.applyFeatureModel()
-
-        mainWindow.displayToast("Frente: " + ruaNome)
-
-        selectingFrontStreet = false
-        mainWindow.setMode("pan")
-        return true
-    }
-}
-"""
-
 
 
 def fix_relative_paths(qgz_path: Path, base_dir: Path):
@@ -296,6 +165,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
         ("limitante/limitante.gpkg", "Limitante"),
         ("quadras/quadras_vertices.gpkg", "Quadras"),
         ("final/lote_rua.gpkg", "Lotes"),
+        ("perimetro/perimetro.gpkg", "Perímetro")
     ]
 
     final_layer_obj = None
@@ -345,6 +215,9 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
 
         elif "quadras" in rel_path.lower():
             stylize_layer_quadras(layer)
+        
+        elif "perimetro" in rel_path.lower():
+            stylize_layer_perimetro(layer)
 
         elif "lotes_area_rotulos" in rel_path.lower():
             stylize_rotulos_area(layer)
@@ -370,6 +243,7 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
             existing = {f.name() for f in layer.fields()}
 
             required_fields = [
+                ("IMOVEL_REURBPLUS", QVariant.Int), ## ou String??
                 ("Nome", QVariant.String),
                 ("Telefone", QVariant.String),
                 ("Endereco", QVariant.String),
@@ -377,11 +251,11 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 ("STATUS", QVariant.String),
                 ("quadra", QVariant.String),
                 ("lote_num", QVariant.String),
-                ("observação", QVariant.String),
-                ("código", QVariant.String),
+                ("Observações", QVariant.String),
                 ("foto", QVariant.String),
                 ("frente_rua_nome", QVariant.String),
                 ("frente_rua_id", QVariant.Int),
+                ("categoria", QVariant.String),
             ]
 
             for fname, ftype in required_fields:
@@ -475,6 +349,21 @@ def create_final_project(base_dir: Path, ortho_path: Path = None, DEFAULT_CRS="E
                 }
                 widget = QgsEditorWidgetSetup("ValueMap", {
                     "map": value_map
+                })
+                layer.setEditorWidgetSetup(status_idx, widget)
+                form_config.setReadOnly(status_idx, False)
+            
+             # --- 3. Configurar widget de categoria ---
+            status_idx = layer.fields().indexFromName("categoria")
+            if status_idx != -1:
+                value_map_cat = {
+                    "Praça": "Praça",
+                    "Área Verde": "Área Verde",
+                    "Área Institucional": "Área Institucional",
+                    "Lote": "Lote",
+                }
+                widget = QgsEditorWidgetSetup("ValueMap", {
+                    "map": value_map_cat
                 })
                 layer.setEditorWidgetSetup(status_idx, widget)
                 form_config.setReadOnly(status_idx, False)

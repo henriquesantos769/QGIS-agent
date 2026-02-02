@@ -39,16 +39,127 @@ QgsApplication.processingRegistry().addProvider(QgsNativeAlgorithms())
 # ==================== HELPERS ====================
 def save_layer(layer: QgsVectorLayer, file_path: Path, driver="ESRI Shapefile", layer_name=None):
     file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 🔥 SOLUÇÃO: se for GPKG, remove o arquivo inteiro
+    if driver.upper() == "GPKG" and file_path.exists():
+        file_path.unlink()
+
     opts = QgsVectorFileWriter.SaveVectorOptions()
     opts.driverName = driver
     opts.fileEncoding = "UTF-8"
     if layer_name:
         opts.layerName = layer_name
+
     ctx = QgsProject.instance().transformContext()
-    err, msg = QgsVectorFileWriter.writeAsVectorFormatV2(layer, str(file_path), ctx, opts)
+    err, msg = QgsVectorFileWriter.writeAsVectorFormatV2(
+        layer,
+        str(file_path),
+        ctx,
+        opts
+    )
+
     if err != QgsVectorFileWriter.NoError:
         raise RuntimeError(f"Falha ao salvar '{file_path}': {msg}")
+
     return file_path
+
+def separar_perimetro_maior_poligono(
+    lotes_layer: QgsVectorLayer,
+    fator_minimo: float = 3.0,
+    salvar_perimetro_em: Path | None = None,
+    salvar_lotes_em: Path | None = None,
+):
+    """
+    Separa o maior polígono (perímetro) dos demais lotes.
+
+    🔹 PROCESSAMENTO 100% EM MEMÓRIA
+    🔹 Persistência é opcional (side-effect controlado)
+    """
+
+    # -------------------------
+    # 1️⃣ coletar áreas
+    # -------------------------
+    areas = []
+    for f in lotes_layer.getFeatures():
+        geom = f.geometry()
+        if geom and not geom.isEmpty():
+            areas.append((f, geom.area()))
+
+    if len(areas) < 2:
+        raise RuntimeError("Não há polígonos suficientes para detectar perímetro.")
+
+    areas.sort(key=lambda x: x[1], reverse=True)
+
+    feat_maior, area_maior = areas[0]
+    _, area_segundo = areas[1]
+
+    ratio = area_maior / area_segundo
+    if ratio < fator_minimo:
+        raise RuntimeError(
+            f"Maior polígono não é suficientemente maior "
+            f"(ratio={ratio:.2f}, mínimo={fator_minimo})."
+        )
+
+    # -------------------------
+    # 2️⃣ criar layers em memória
+    # -------------------------
+    crs = lotes_layer.crs().authid()
+    geom_type = QgsWkbTypes.displayString(lotes_layer.wkbType())
+
+    perimetro_mem = QgsVectorLayer(
+        f"{geom_type}?crs={crs}", "perimetro", "memory"
+    )
+    lotes_mem = QgsVectorLayer(
+        f"{geom_type}?crs={crs}", "lotes_validos", "memory"
+    )
+
+    pr_p = perimetro_mem.dataProvider()
+    pr_l = lotes_mem.dataProvider()
+
+    pr_p.addAttributes(lotes_layer.fields())
+    pr_l.addAttributes(lotes_layer.fields())
+
+    perimetro_mem.updateFields()
+    lotes_mem.updateFields()
+
+    # -------------------------
+    # 3️⃣ distribuir feições (FID resetado!)
+    # -------------------------
+    for f, _ in areas:
+        nf = QgsFeature(perimetro_mem.fields())
+        nf.setGeometry(f.geometry())
+        nf.setAttributes(f.attributes())
+
+        if f.id() == feat_maior.id():
+            pr_p.addFeature(nf)
+        else:
+            pr_l.addFeature(nf)
+
+    perimetro_mem.updateExtents()
+    lotes_mem.updateExtents()
+
+    # -------------------------
+    # 4️⃣ persistência opcional
+    # -------------------------
+    if salvar_perimetro_em:
+        save_layer(
+            perimetro_mem,
+            salvar_perimetro_em,
+            driver="GPKG",
+            layer_name="perimetro"
+        )
+
+    if salvar_lotes_em:
+        save_layer(
+            lotes_mem,
+            salvar_lotes_em,
+            driver="GPKG",
+            layer_name="lotes"
+        )
+
+    return perimetro_mem, lotes_mem
+
+
 
 def calcular_azimute(p1, p2):
     dx = p2.x() - p1.x()

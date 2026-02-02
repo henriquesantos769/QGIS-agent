@@ -220,6 +220,30 @@ def stylize_layer_quadras(layer):
 
     print("✨ Camada de quadras estilizada (apenas contorno).")
 
+def stylize_layer_perimetro(layer):
+    """
+    Aplica estilo à camada de perimetro:
+    - Sem preenchimento
+    - Apenas contorno visível
+    """
+
+    if not layer or not layer.isValid():
+        print("❌ Camada inválida para estilização.")
+        return
+
+    # Criar símbolo sem preenchimento
+    symbol = QgsFillSymbol.createSimple({
+        "color": "0,0,0,0",           # totalmente transparente
+        "outline_color": "#FF00FF",   # rosa
+        "outline_width": "0.0",
+        "outline_style": "solid"
+    })
+
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+    layer.triggerRepaint()
+
+    print("✨ Camada de quadras estilizada (apenas contorno).")
+
 def stylize_layer_outros(layer):
     """
     Aplica estilo visual à camada de limitantes:

@@ -210,6 +210,93 @@ def exportar_tabela_coordenadas_quadras(upload_dir, arquivo_segmentos="quadras_s
     print("Tabela de coordenadas exportada →", out)
     return out
 
+def exportar_tabela_coordenadas_perimetro(
+    upload_dir,
+    arquivo_segmentos="perimetro_segmentos.gpkg"
+):
+    upload_dir = Path(upload_dir)
+    path_seg = upload_dir / "final" / arquivo_segmentos
+    gdf = gpd.read_file(path_seg)
+
+    # --------------------------
+    # Validação mínima
+    # --------------------------
+    required_cols = {"quadra", "x1", "y1", "azimute", "comprimento", "seq"}
+    missing = required_cols - set(gdf.columns)
+    if missing:
+        raise RuntimeError(
+            f"Arquivo {arquivo_segmentos} não possui colunas obrigatórias: {missing}"
+        )
+
+    # --------------------------
+    # Para perímetro: usa uma única quadra
+    # --------------------------
+    quadras = gdf["quadra"].unique()
+    if len(quadras) != 1:
+        raise RuntimeError(
+            f"Esperado apenas uma quadra (perímetro), encontrado: {quadras}"
+        )
+
+    quadra = quadras[0]
+    sub = gdf[gdf["quadra"] == quadra].copy().reset_index(drop=True)
+
+    # --------------------------
+    # Reordenar a partir do ponto mais ao norte
+    # --------------------------
+    idx_inicio = sub["y1"].idxmax()
+    sub = pd.concat(
+        [sub.loc[idx_inicio:], sub.loc[:idx_inicio]],
+        ignore_index=True
+    )
+
+    # --------------------------
+    # Formatadores
+    # --------------------------
+    def fmt_coord(v):
+        return f"{v:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def fmt_dist(v):
+        return f"{v:,.2f} m".replace(",", "X").replace(".", ",").replace("X", ",")
+
+    def fmt_dms(az):
+        g = int(az)
+        m_float = (az - g) * 60
+        m = int(m_float)
+        s = round((m_float - m) * 60)
+        return f'{g}°{m:02d}\'{s:02d}"'
+
+    # --------------------------
+    # Montar registros
+    # --------------------------
+    registros = []
+
+    for i, row in sub.iterrows():
+        P1 = f"P{str(i+1).zfill(2)}"
+        P2 = f"P{str(i+2).zfill(2)}" if i < len(sub)-1 else "P01"
+
+        registros.append({
+            "de": P1,
+            "para": P2,
+            "ny": fmt_coord(row["y1"]),
+            "ex": fmt_coord(row["x1"]),
+            "az": fmt_dms(row["azimute"]),
+            "dist": fmt_dist(row["comprimento"])
+        })
+
+    # --------------------------
+    # Salvar JSON
+    # --------------------------
+    out = upload_dir / "memoriais" / "tabela_coordenadas_perimetro.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(registros, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+
+    print("Tabela de coordenadas exportada →", out)
+    return out
+
+
 def gerar_tabela_coordenadas_excel(json_path, xlsx_path=None):
     json_path = Path(json_path)
     data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -219,12 +306,47 @@ def gerar_tabela_coordenadas_excel(json_path, xlsx_path=None):
 
     writer = pd.ExcelWriter(xlsx_path, engine="xlsxwriter")
 
-    for quadra, registros in sorted(data.items(), key=lambda x: int(x[0])):
-        df = pd.DataFrame(registros)
+    # --------------------------
+    # CASO 1: QUADRAS (dict)
+    # --------------------------
+    if isinstance(data, dict):
+        for quadra, registros in sorted(data.items(), key=lambda x: int(x[0])):
+            df = pd.DataFrame(registros)
+            df = df[["de", "para", "ny", "ex", "az", "dist"]]
+            df.columns = [
+                "De", "Para",
+                "Coord. N(Y)", "Coord. E(X)",
+                "Azimute", "Distância"
+            ]
+            df.to_excel(
+                writer,
+                sheet_name=f"Quadra_{quadra}",
+                index=False
+            )
+
+    # --------------------------
+    # CASO 2: PERÍMETRO (list)
+    # --------------------------
+    elif isinstance(data, list):
+        df = pd.DataFrame(data)
         df = df[["de", "para", "ny", "ex", "az", "dist"]]
-        df.columns = ["De", "Para", "Coord. N(Y)", "Coord. E(X)", "Azimute", "Distância"]
-        df.to_excel(writer, sheet_name=f"Quadra_{quadra}", index=False)
+        df.columns = [
+            "De", "Para",
+            "Coord. N(Y)", "Coord. E(X)",
+            "Azimute", "Distância"
+        ]
+        df.to_excel(
+            writer,
+            sheet_name="Perímetro",
+            index=False
+        )
+
+    else:
+        raise RuntimeError(
+            f"Formato JSON não suportado: {type(data)}"
+        )
 
     writer.close()
     print("Excel gerado →", xlsx_path)
     return xlsx_path
+

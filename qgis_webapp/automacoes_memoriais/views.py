@@ -13,7 +13,9 @@ from django.views.decorators.cache import never_cache
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 
-from .export_utils import (gerar_planilha_area_quadras_xlsx, gerar_planilha_area_quadras_prepare, exportar_tabela_coordenadas_quadras, gerar_tabela_coordenadas_excel)
+from .export_utils import (gerar_planilha_area_quadras_xlsx, gerar_planilha_area_quadras_prepare,
+                           exportar_tabela_coordenadas_quadras, gerar_tabela_coordenadas_excel,
+                           exportar_tabela_coordenadas_perimetro)
 
 # ---------------------------------------------------------
 # 📊 Progresso (session-based)
@@ -185,6 +187,9 @@ def baixar_memoriais(request):
     xlsx_tabela_coordenadas = gerar_tabela_coordenadas_excel(json_path_tabela_coordenadas)
     print("XLSX gerado:", xlsx)
     print("XLSX tabela coordenadas gerado:", xlsx_tabela_coordenadas)
+    json_path_tabela_coordenadas_perimetro = exportar_tabela_coordenadas_perimetro(base_dir)
+    xlsx_tabela_coordenadas_perimetro = gerar_tabela_coordenadas_excel(json_path_tabela_coordenadas_perimetro)
+    print("XLSX tabela coordenadas perimetro gerado:", xlsx_tabela_coordenadas_perimetro)   
 
     if not base_dir:
         return JsonResponse({
