@@ -176,7 +176,7 @@ def main():
         calcular_medidas_e_azimutes(out_dir, epsg_lotes=int(crs.split(":")[1]))
 
         write_progress(out_dir, 16, "📝 Gerando memoriais dos lotes...")
-        # gerar_memoriais_em_lote(out_dir)
+        gerar_memoriais_em_lote(out_dir)
 
         write_progress(out_dir, 18, "📝 Gerando memoriais das quadras...")
 

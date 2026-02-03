@@ -95,10 +95,8 @@ def separar_perimetro_maior_poligono(
 
     ratio = area_maior / area_segundo
     if ratio < fator_minimo:
-        raise RuntimeError(
-            f"Maior polígono não é suficientemente maior "
-            f"(ratio={ratio:.2f}, mínimo={fator_minimo})."
-        )
+        return None, lotes_layer
+
 
     # -------------------------
     # 2️⃣ criar layers em memória
