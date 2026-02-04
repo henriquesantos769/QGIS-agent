@@ -1,5 +1,13 @@
 // main.js (VERSÃO DE DEPURAÇÃO)
 
+// -----------------------------
+// 🗺️ Campos de memoriais
+// -----------------------------
+const fusoInput = document.getElementById("fusoInput");
+const fuso = document.getElementById("fusoInput")?.value;
+const cidadeInput = document.getElementById("cidadeInput");
+const nucleoInput = document.getElementById("nucleoInput");
+
 const dropDXF = document.getElementById("dropzone-dxf");
 const dropQGISZip = document.getElementById("dropzone-qgis-zip");
 const dropOrtho = document.getElementById("dropzone-ortho");
@@ -201,8 +209,25 @@ async function enviarArquivosParaServidor() {
   // A verificação de 'ambos obrigatórios' agora está só no 'checkReadyToStart'
   // O envio só acontece se o botão 'startBtn' estiver visível.
 
+
   const formData = new FormData();
   formData.append("arquivo", selectedDXF);
+  const fuso = fusoInput?.value?.trim();
+  const cidade = cidadeInput?.value?.trim();
+  const nucleo = nucleoInput?.value?.trim();
+
+  console.log("DEBUG FRONTEND:", { fuso, cidade, nucleo });
+
+  if (!fuso) {
+    showToast("❌ Informe o Fuso UTM.");
+    clearLoading(startBtn);
+    return false;
+  }
+
+  formData.append("fuso", fuso);
+  formData.append("cidade", cidade || "");
+  formData.append("nucleo", nucleo || "");
+  
   // Garante que a ortofoto só é enviada se existir
   if (selectedOrtho) formData.append("ortofoto", selectedOrtho);
 

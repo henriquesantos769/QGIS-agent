@@ -521,3 +521,77 @@ h1 { margin:0 0 8px;
     font-size: 12px;
   }
 }
+/* ===============================
+   🗺️ Dados do Projeto (Memoriais)
+   =============================== */
+
+.memorial-area {
+  margin-top: 28px;
+  padding: 20px;
+  border-radius: 18px;
+  background: linear-gradient(
+    135deg,
+    rgba(255,255,255,0.04),
+    rgba(255,255,255,0.02)
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.memorial-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #e5e7eb;
+  margin-bottom: 14px;
+}
+
+.memorial-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+/* Campo individual */
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Label */
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9ca3af;
+  margin-bottom: 6px;
+}
+
+/* Input */
+.field input {
+  background: rgba(15, 23, 42, 0.7); /* azul escuro */
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: #f9fafb;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+/* Placeholder */
+.field input::placeholder {
+  color: #6b7280;
+}
+
+/* Hover */
+.field input:hover {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+/* Focus */
+.field input:focus {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+  background: rgba(15, 23, 42, 0.9);
+}
+

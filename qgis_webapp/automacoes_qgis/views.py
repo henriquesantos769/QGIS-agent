@@ -106,7 +106,7 @@ def resetar_progresso(request):
     print("🔁 Progresso e sessão zerados (isolado por usuário)")
     return JsonResponse({"status": "ok", "progresso": request.session["progresso"]})
 
-def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
+def executar_pipeline(upload_dir, dxf_path, ortho_path, fuso_utm, epsg_sirgas, session_key):
     try:
         def check_cancel(session_key, etapa_desc="Operação"):
             if pipeline_cancelado(session_key):
@@ -147,7 +147,7 @@ def executar_pipeline(upload_dir, dxf_path, ortho_path, session_key):
         atualizar_progresso_thread(session_key, 3, "🔧 Convertendo DXF em camadas vetoriais...")
         linhas = dxf_to_shp(dxf_path, paths["linhas"])
 
-        fuso, crs_int = detectar_fuso_utm(dxf_path)
+        fuso, crs_int = fuso_utm, epsg_sirgas
         # fuso = 23
         # crs_int = 31983
         crs_str = f"EPSG:{crs_int}"
@@ -290,6 +290,40 @@ def criar_projeto_qgis(request):
     upload_dir = Path(settings.MEDIA_ROOT) / "uploads" / f"{Path(arquivo.name).stem}_{unique_id}"
     upload_dir.mkdir(parents=True, exist_ok=True)
     dxf_path = upload_dir / arquivo.name
+    fuso_raw = request.POST.get("fuso")
+    print("===== DEBUG POST =====")
+    print("POST:", dict(request.POST))
+    print("FILES:", request.FILES)
+    print("======================")
+
+    if not fuso_raw:
+        return JsonResponse({
+            "status": "erro",
+            "mensagem": "Fuso UTM não informado."
+        }, status=400)
+    try:
+        fuso_utm = int(fuso_raw)
+    except ValueError:
+        return JsonResponse({
+            "status": "erro",
+            "mensagem": "Fuso UTM inválido."
+        }, status=400)
+    MAPA_SIRGAS = {
+        21: 31981,
+        22: 31982,
+        23: 31983,
+        24: 31984,
+        25: 31985,
+    }
+    if fuso_utm not in MAPA_SIRGAS:
+        return JsonResponse({
+            "status": "erro",
+            "mensagem": "Fuso UTM inválido. Use valores entre 21 e 25."
+        }, status=400)
+
+    epsg_sirgas = MAPA_SIRGAS[fuso_utm]
+    print(f"Fuso inserido: {fuso_utm}")
+    print(f"Sirgas Adquirido: {epsg_sirgas}")
 
     request.session["base_dir"] = str(upload_dir)
     request.session.modified = True
@@ -321,7 +355,8 @@ def criar_projeto_qgis(request):
     print("Sessão antes da thread:", request.session.get("progresso"))
     threading.Thread(
         target=executar_pipeline,
-        args=(upload_dir, dxf_path, ortho_path, request.session.session_key),
+        args=(upload_dir, dxf_path, ortho_path, fuso_utm,
+        epsg_sirgas, request.session.session_key),
         daemon=True
     ).start()
 
@@ -500,7 +535,7 @@ def enviar_para_qfieldcloud(session_key, name_zip_project = None):
 
     proj = client.create_project(
         name=project_name,
-        owner="ICL_ORG",
+        owner="OrgICL",
         description="Exportado via Django",
         is_public=False
     )
