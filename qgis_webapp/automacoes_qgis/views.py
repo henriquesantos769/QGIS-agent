@@ -509,10 +509,14 @@ def enviar_para_qfieldcloud(session_key, name_zip_project = None):
     if not base_dir.exists():
         atualizar_progresso_qfield_thread(session_key, "❌ Pasta do projeto não encontrada no servidor.")
         return
-
+    '''
     username = os.getenv("QFIELD_USER")
+    print(f"Username: {username}")
     password = os.getenv("QFIELD_PASS")
-
+    print(f"Username: {password}")
+    '''
+    username = "testefotosqf@gmail.com"
+    password = "@Senhaqfield123"
     # Detecta ortofoto e gera nome do projeto
     ortho_dir = base_dir / "ortofoto"
     ortho_files = list(ortho_dir.glob("*.tif"))
@@ -535,14 +539,14 @@ def enviar_para_qfieldcloud(session_key, name_zip_project = None):
 
     proj = client.create_project(
         name=project_name,
-        owner="OrgICL",
+        owner="TesteImgs",
         description="Exportado via Django",
         is_public=False
     )
     project_id = proj["id"]
 
     # 🔹 Lista arquivos relevantes da pasta atual
-    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante", "fotos"]
+    pastas_necessarias = ["final", "quadras", "ruas", "ortofoto", "limitante", "DECIM"]
     exts = {".gpkg", ".tif", ".vrt", ".png", ".qgs"}
     files = []
 
